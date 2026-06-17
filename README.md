@@ -99,6 +99,15 @@ ranges, or put it behind a reverse proxy with TLS — it's a write-triggering
 endpoint and should not be open to the world without the bearer token check
 in front of it.
 
+`SYNC_API_PORT` must be one of Cloudflare's allowed outbound ports for
+Workers/Pages Functions `fetch()` calls — HTTP: `80, 8080, 8880, 2052,
+2082, 2086, 2095` (HTTPS: `443, 2053, 2083, 2087, 2096, 8443`). Anything
+else returns `error code: 1003` from the dashboard's Refresh button, even
+if the port is open and reachable directly. `DROPLET_SYNC_URL` also needs
+a hostname rather than a bare IP (Cloudflare's edge rejects direct-IP
+fetches) — a free `<ip-with-dashes>.nip.io` hostname works if you don't
+have a real domain to point at the droplet.
+
 **Cloudflare side** — in `frontend/`:
 
 1. Create a D1 database (`wrangler d1 create trader`) and run
@@ -106,7 +115,7 @@ in front of it.
 2. Update `database_id` in `frontend/wrangler.toml` with the new D1 database's ID.
 3. Deploy: `cd frontend && wrangler pages deploy public`.
 4. In the Pages project's settings, set two **encrypted** environment
-   variables: `DROPLET_SYNC_URL` (e.g. `https://<droplet-ip-or-domain>:8787/sync`)
+   variables: `DROPLET_SYNC_URL` (e.g. `http://<droplet-hostname>:8080/sync`)
    and `DROPLET_SYNC_TOKEN` (same value as `SYNC_API_TOKEN` in `.env`).
 
 The dashboard (`public/index.html`) shows daily P&L, trades, and signals,
