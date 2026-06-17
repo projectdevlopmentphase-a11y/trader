@@ -69,6 +69,50 @@ adjust the `User`/`WorkingDirectory` paths, then `systemctl enable --now
 trader`). Only live order placement requires the droplet's whitelisted
 static IP — backtest/paper can run anywhere.
 
+## Dashboard (Cloudflare Pages + D1)
+
+The bot's SQLite database (`trader.db`) stays the source of truth. The
+dashboard is a separate, read-only view backed by Cloudflare D1, refreshed
+on demand:
+
+```
+[trader.db on droplet] --(Refresh click)--> [/sync on droplet, Flask]
+                                                    ^
+                                  [Pages Function /api/sync] (holds secret)
+                                                    ^
+                                       [Dashboard "Refresh" button]
+
+[Dashboard tables] <--(D1 binding)-- [Pages Functions /api/trades,signals,pnl]
+```
+
+**Droplet side** — run the sync API alongside the bot:
+
+```bash
+.venv/bin/python -m api.server
+# or: systemctl enable --now sync-api   (deploy/sync-api.service)
+```
+
+Set in `.env`: `CF_ACCOUNT_ID`, `CF_API_TOKEN` (D1 edit permission),
+`CF_D1_DATABASE_ID`, `SYNC_API_TOKEN` (shared secret), `SYNC_API_PORT`.
+Open `SYNC_API_PORT` on the droplet's firewall only to Cloudflare's IP
+ranges, or put it behind a reverse proxy with TLS — it's a write-triggering
+endpoint and should not be open to the world without the bearer token check
+in front of it.
+
+**Cloudflare side** — in `frontend/`:
+
+1. Create a D1 database (`wrangler d1 create trader`) and run
+   `frontend/schema.sql` against it to create the tables.
+2. Update `database_id` in `frontend/wrangler.toml` with the new D1 database's ID.
+3. Deploy: `cd frontend && wrangler pages deploy public`.
+4. In the Pages project's settings, set two **encrypted** environment
+   variables: `DROPLET_SYNC_URL` (e.g. `https://<droplet-ip-or-domain>:8787/sync`)
+   and `DROPLET_SYNC_TOKEN` (same value as `SYNC_API_TOKEN` in `.env`).
+
+The dashboard (`public/index.html`) shows daily P&L, trades, and signals,
+and pulls fresh data from the droplet only when you click Refresh — D1 is
+otherwise just a cache Cloudflare can query without touching the droplet.
+
 ## Compliance notes (SEBI framework, effective 1 Apr 2026)
 
 - Static IP must stay whitelisted in the Kite developer console for live

@@ -63,6 +63,13 @@ class Settings:
 
     db_path: str = field(default_factory=lambda: os.getenv("DB_PATH", "trader.db"))
 
+    # Cloudflare D1 sync (dashboard data source) — only needed for the /sync endpoint.
+    cf_account_id: str = field(default_factory=lambda: os.getenv("CF_ACCOUNT_ID", ""))
+    cf_api_token: str = field(default_factory=lambda: os.getenv("CF_API_TOKEN", ""))
+    cf_d1_database_id: str = field(default_factory=lambda: os.getenv("CF_D1_DATABASE_ID", ""))
+    sync_api_token: str = field(default_factory=lambda: os.getenv("SYNC_API_TOKEN", ""))
+    sync_api_port: int = field(default_factory=lambda: int(os.getenv("SYNC_API_PORT", "8787")))
+
     def __post_init__(self) -> None:
         if self.mode not in VALID_MODES:
             raise ValueError(f"MODE must be one of {VALID_MODES}, got {self.mode!r}")

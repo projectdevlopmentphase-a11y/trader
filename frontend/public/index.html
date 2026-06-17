@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trader Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0f1115; color: #e6e6e6; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #8a8f98; font-size: 13px; margin-bottom: 20px; }
+  button { background: #2563eb; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button:disabled { background: #444; cursor: default; }
+  .status { font-size: 13px; margin-left: 12px; color: #8a8f98; }
+  section { margin-top: 28px; }
+  h2 { font-size: 15px; color: #c7cad1; border-bottom: 1px solid #2a2d34; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #1f2127; }
+  th { color: #8a8f98; font-weight: 500; }
+  .pnl-pos { color: #22c55e; }
+  .pnl-neg { color: #ef4444; }
+  .halted { color: #ef4444; font-weight: 600; }
+  .empty { color: #5a5f68; padding: 12px 0; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Trader Dashboard</h1>
+  <div class="sub">Reads from Cloudflare D1. Click Refresh to pull the latest from the bot's SQLite database on the droplet.</div>
+  <button id="refresh-btn" onclick="refreshAndLoad()">Refresh from droplet</button>
+  <span class="status" id="status"></span>
+
+  <section>
+    <h2>Daily P&amp;L</h2>
+    <table id="pnl-table">
+      <thead><tr><th>Date</th><th>Realized P&amp;L</th><th>Trades</th><th>Halted</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Trades</h2>
+    <table id="trades-table">
+      <thead><tr><th>Time</th><th>Mode</th><th>Strategy</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th><th>P&amp;L</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Signals</h2>
+    <table id="signals-table">
+      <thead><tr><th>Time</th><th>Strategy</th><th>Symbol</th><th>Action</th><th>Price</th><th>Reason</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+<script>
+const statusEl = document.getElementById("status");
+const btn = document.getElementById("refresh-btn");
+
+function fmt(n) {
+  if (n === null || n === undefined) return "";
+  return Number(n).toFixed(2);
+}
+
+function pnlClass(n) {
+  return n > 0 ? "pnl-pos" : n < 0 ? "pnl-neg" : "";
+}
+
+function renderEmpty(tbody, colspan, message) {
+  tbody.innerHTML = `<tr><td colspan="${colspan}" class="empty">${message}</td></tr>`;
+}
+
+async function loadPnl() {
+  const rows = await fetch("/api/pnl").then(r => r.json());
+  const tbody = document.querySelector("#pnl-table tbody");
+  if (!rows.length) return renderEmpty(tbody, 4, "No P&L data yet.");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.trade_date}</td>
+      <td class="${pnlClass(r.realized_pnl)}">${fmt(r.realized_pnl)}</td>
+      <td>${r.trade_count}</td>
+      <td>${r.halted ? '<span class="halted">YES</span>' : 'no'}</td>
+    </tr>`).join("");
+}
+
+async function loadTrades() {
+  const rows = await fetch("/api/trades").then(r => r.json());
+  const tbody = document.querySelector("#trades-table tbody");
+  if (!rows.length) return renderEmpty(tbody, 9, "No trades yet.");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.ts}</td>
+      <td>${r.mode}</td>
+      <td>${r.strategy}</td>
+      <td>${r.symbol}</td>
+      <td>${r.side}</td>
+      <td>${r.quantity}</td>
+      <td>${fmt(r.price)}</td>
+      <td>${r.status}</td>
+      <td class="${pnlClass(r.pnl)}">${r.pnl !== null ? fmt(r.pnl) : ""}</td>
+    </tr>`).join("");
+}
+
+async function loadSignals() {
+  const rows = await fetch("/api/signals").then(r => r.json());
+  const tbody = document.querySelector("#signals-table tbody");
+  if (!rows.length) return renderEmpty(tbody, 6, "No signals yet.");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${r.ts}</td>
+      <td>${r.strategy}</td>
+      <td>${r.symbol}</td>
+      <td>${r.action}</td>
+      <td>${fmt(r.price)}</td>
+      <td>${r.meta || ""}</td>
+    </tr>`).join("");
+}
+
+async function loadAll() {
+  await Promise.all([loadPnl(), loadTrades(), loadSignals()]);
+}
+
+async function refreshAndLoad() {
+  btn.disabled = true;
+  statusEl.textContent = "Syncing from droplet...";
+  try {
+    const res = await fetch("/api/sync", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "sync failed");
+    statusEl.textContent = `Synced: ${JSON.stringify(data.counts)}`;
+  } catch (err) {
+    statusEl.textContent = `Sync failed: ${err.message}`;
+  }
+  await loadAll();
+  btn.disabled = false;
+}
+
+loadAll();
+</script>
+</body>
+</html>

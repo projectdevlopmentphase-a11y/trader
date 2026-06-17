@@ -1,0 +1,16 @@
+[Unit]
+Description=Trading bot D1 sync API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/home/trader/trader
+EnvironmentFile=/home/trader/trader/.env
+ExecStart=/home/trader/trader/.venv/bin/python -m api.server
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
