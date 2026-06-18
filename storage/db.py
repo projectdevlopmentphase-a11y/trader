@@ -160,3 +160,12 @@ def is_halted(trade_date: str) -> bool:
         cur.execute("SELECT halted FROM daily_pnl WHERE trade_date = ?", (trade_date,))
         row = cur.fetchone()
         return bool(row[0]) if row else False
+
+
+def reset_backtest_data() -> None:
+    """Wipes signals/trades/daily_pnl so a backtest re-run starts from a clean slate
+    instead of accumulating on top of a previous run's rows."""
+    with cursor() as cur:
+        cur.execute("DELETE FROM signals")
+        cur.execute("DELETE FROM trades")
+        cur.execute("DELETE FROM daily_pnl")

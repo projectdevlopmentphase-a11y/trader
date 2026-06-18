@@ -55,6 +55,23 @@ class Settings:
     orb_candle_interval: str = field(
         default_factory=lambda: os.getenv("ORB_CANDLE_INTERVAL", "5minute")
     )
+    # Volume confirmation: breakout candle's volume must be >= this multiple
+    # of the recent average volume. Set to 0 to disable the filter.
+    orb_volume_multiplier: float = field(
+        default_factory=lambda: float(os.getenv("ORB_VOLUME_MULTIPLIER", "1.5"))
+    )
+    orb_volume_lookback: int = field(
+        default_factory=lambda: int(os.getenv("ORB_VOLUME_LOOKBACK", "20"))
+    )
+    # NR7-style filter: only take entries on a day whose prior day's range was
+    # the narrowest of the last N trading days. Set to 0 to disable.
+    orb_nr7_lookback: int = field(
+        default_factory=lambda: int(os.getenv("ORB_NR7_LOOKBACK", "7"))
+    )
+    # No new entries after this time of day (24h "HH:MM", candle's own clock).
+    orb_entry_cutoff_time: str = field(
+        default_factory=lambda: os.getenv("ORB_ENTRY_CUTOFF_TIME", "13:00")
+    )
 
     market_protection_pct: float = field(
         default_factory=lambda: float(os.getenv("MARKET_PROTECTION_PCT", "1.0"))

@@ -12,7 +12,7 @@ from execution.base import OrderExecutor
 from execution.live import LiveExecutor
 from execution.paper import PaperExecutor
 from scheduler.scheduler import start_square_off_scheduler
-from storage.db import log_error, log_signal
+from storage.db import log_error, log_signal, reset_backtest_data
 from strategy.base import Action, Signal
 from strategy.orb import ORBStrategy
 
@@ -109,10 +109,19 @@ def run_backtest() -> None:
     from data.historical import fetch_historical_candles
     from risk.risk_manager import RiskManager
 
+    reset_backtest_data()
+
     auth = KiteAuth()
     kite = auth.authenticated_client()
 
-    strategy = ORBStrategy(settings.orb_range_minutes, settings.orb_candle_interval)
+    strategy = ORBStrategy(
+        settings.orb_range_minutes,
+        settings.orb_candle_interval,
+        settings.orb_volume_multiplier,
+        settings.orb_volume_lookback,
+        settings.orb_nr7_lookback,
+        settings.orb_entry_cutoff_time,
+    )
     risk_manager = RiskManager(
         settings.capital,
         settings.risk_pct_per_trade,
@@ -153,7 +162,14 @@ def run_live_or_paper() -> None:
     from data.ticker import LiveTicker
     from risk.risk_manager import RiskManager
 
-    strategy = ORBStrategy(settings.orb_range_minutes, settings.orb_candle_interval)
+    strategy = ORBStrategy(
+        settings.orb_range_minutes,
+        settings.orb_candle_interval,
+        settings.orb_volume_multiplier,
+        settings.orb_volume_lookback,
+        settings.orb_nr7_lookback,
+        settings.orb_entry_cutoff_time,
+    )
     risk_manager = RiskManager(
         settings.capital,
         settings.risk_pct_per_trade,
