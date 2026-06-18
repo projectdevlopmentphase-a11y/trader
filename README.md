@@ -16,9 +16,13 @@ Personal/family use only. See compliance notes below.
    websocket + candle builder for paper/live.
 4. **Strategy engine** (`strategy/`) — common `on_candle(symbol, candle) ->
    Signal | None` interface. ORB is the first implementation.
-5. **Risk manager** (`risk/`) — position sizing by % risk per trade, daily
+5. **Daily scanner** (`strategy/scanner.py`) — each trading day, ranks a
+   broader `SCAN_UNIVERSE` by relative volume and gap activity and picks the
+   top `SCAN_TOP_N` symbols to trade that day, instead of always trading the
+   same fixed `WATCHLIST` regardless of conditions.
+6. **Risk manager** (`risk/`) — position sizing by % risk per trade, daily
    loss cap, and a kill switch after repeated errors.
-6. **Order executor** (`execution/`) — same interface across backtest,
+7. **Order executor** (`execution/`) — same interface across backtest,
    paper and live modes.
 
 SQLite (`storage/db.py`) logs every signal, trade, error, and the running

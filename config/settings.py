@@ -49,6 +49,24 @@ class Settings:
 
     watchlist: list[str] = field(default_factory=lambda: _get_list("WATCHLIST"))
 
+    # Daily scan: picks the day's trading watchlist from this broader universe
+    # based on relative volume / gap activity, instead of always trading the
+    # same fixed symbols. Falls back to `watchlist` if left empty.
+    scan_universe: list[str] = field(default_factory=lambda: _get_list("SCAN_UNIVERSE"))
+    scan_top_n: int = field(default_factory=lambda: int(os.getenv("SCAN_TOP_N", "3")))
+    scan_min_relative_volume: float = field(
+        default_factory=lambda: float(os.getenv("SCAN_MIN_RELATIVE_VOLUME", "1.5"))
+    )
+    scan_min_gap_pct: float = field(
+        default_factory=lambda: float(os.getenv("SCAN_MIN_GAP_PCT", "0.5"))
+    )
+    scan_lookback_days: int = field(
+        default_factory=lambda: int(os.getenv("SCAN_LOOKBACK_DAYS", "20"))
+    )
+
+    backtest_days: int = field(default_factory=lambda: int(os.getenv("BACKTEST_DAYS", "180")))
+
+
     orb_range_minutes: int = field(
         default_factory=lambda: int(os.getenv("ORB_RANGE_MINUTES", "15"))
     )

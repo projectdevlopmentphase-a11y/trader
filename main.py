@@ -108,6 +108,7 @@ def run_backtest() -> None:
     from auth.kite_auth import KiteAuth
     from data.historical import fetch_historical_candles
     from risk.risk_manager import RiskManager
+    from strategy.scanner import group_candles_by_day, rank_candidates, scan_backtest_day
 
     reset_backtest_data()
 
@@ -133,27 +134,53 @@ def run_backtest() -> None:
     instruments = kite.instruments("NSE")
     symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments}
 
-    to_date = datetime.now()
-    from_date = to_date - timedelta(days=30)
+    universe = settings.scan_universe or settings.watchlist
+    range_candles = max(1, settings.orb_range_minutes // int(settings.orb_candle_interval.replace("minute", "") or 1))
 
-    for symbol in settings.watchlist:
+    # Fetch extra history before the backtest window so the relative-volume
+    # baseline has lookback data even on the first simulated day.
+    backtest_start = datetime.now() - timedelta(days=settings.backtest_days)
+    from_date = backtest_start - timedelta(days=settings.scan_lookback_days * 2 + 5)
+    to_date = datetime.now()
+
+    candles_by_symbol_day: dict[str, dict[str, list[dict]]] = {}
+    for symbol in universe:
         token = symbol_to_token.get(symbol)
         if token is None:
             log_error("backtest", f"unknown symbol {symbol}")
             continue
         candles = fetch_historical_candles(kite, token, from_date, to_date, settings.orb_candle_interval)
-        current_day = None
-        last_close = None
-        for candle in candles:
-            candle_date = candle["date"]
-            day = candle_date.date().isoformat() if isinstance(candle_date, datetime) else str(candle_date)[:10]
-            if current_day is not None and day != current_day:
-                app.square_off_symbol(symbol, last_close, current_day)
-            current_day = day
-            last_close = candle["close"]
-            app.handle_candle(symbol, candle)
-        if last_close is not None:
-            app.square_off_symbol(symbol, last_close, current_day)
+        candles_by_symbol_day[symbol] = group_candles_by_day(candles)
+
+    all_days = sorted({day for by_day in candles_by_symbol_day.values() for day in by_day})
+    backtest_start_day = backtest_start.date().isoformat()
+    trading_days = [day for day in all_days if day >= backtest_start_day]
+
+    last_close_per_symbol: dict[str, float] = {}
+
+    for day in trading_days:
+        candidates = scan_backtest_day(
+            candles_by_symbol_day,
+            all_days,
+            day,
+            range_candles,
+            settings.scan_lookback_days,
+            last_close_per_symbol,
+        )
+        todays_watchlist = rank_candidates(
+            candidates, settings.scan_top_n, settings.scan_min_relative_volume, settings.scan_min_gap_pct
+        )
+
+        for symbol in todays_watchlist:
+            day_candles = candles_by_symbol_day[symbol][day]
+            for candle in day_candles:
+                app.handle_candle(symbol, candle)
+            app.square_off_symbol(symbol, day_candles[-1]["close"], day)
+
+        for symbol, by_day in candles_by_symbol_day.items():
+            day_candles = by_day.get(day)
+            if day_candles:
+                last_close_per_symbol[symbol] = day_candles[-1]["close"]
 
 
 def run_live_or_paper() -> None:
@@ -161,6 +188,7 @@ def run_live_or_paper() -> None:
     from data.candle_builder import CandleBuilder
     from data.ticker import LiveTicker
     from risk.risk_manager import RiskManager
+    from strategy.scanner import rank_candidates, scan_live_universe
 
     strategy = ORBStrategy(
         settings.orb_range_minutes,
@@ -183,8 +211,18 @@ def run_live_or_paper() -> None:
 
     auth = KiteAuth()
     kite = auth.authenticated_client()
+
+    universe = settings.scan_universe or settings.watchlist
+    candidates = scan_live_universe(kite, universe, settings.scan_lookback_days)
+    todays_watchlist = rank_candidates(
+        candidates, settings.scan_top_n, settings.scan_min_relative_volume, settings.scan_min_gap_pct
+    )
+    if not todays_watchlist:
+        log_error("scanner", "no symbols qualified for today's watchlist; falling back to static watchlist")
+        todays_watchlist = settings.watchlist
+
     instruments = kite.instruments("NSE")
-    symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments if i["tradingsymbol"] in settings.watchlist}
+    symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments if i["tradingsymbol"] in todays_watchlist}
     token_to_symbol = {token: symbol for symbol, token in symbol_to_token.items()}
 
     interval_minutes = int(settings.orb_candle_interval.replace("minute", "") or 1)
