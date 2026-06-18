@@ -26,19 +26,21 @@ class TraderApp:
         self.open_positions: dict[str, tuple[str, int, float]] = {}
 
     def handle_candle(self, symbol: str, candle: dict) -> None:
+        candle_date = candle["date"]
+        trade_date = candle_date.date().isoformat() if isinstance(candle_date, datetime) else str(candle_date)[:10]
         signal = self.strategy.on_candle(symbol, candle)
         if signal is None:
             return
-        self._handle_signal(signal)
+        self._handle_signal(signal, trade_date)
 
-    def _handle_signal(self, signal: Signal) -> None:
+    def _handle_signal(self, signal: Signal, trade_date: str) -> None:
         log_signal(signal.strategy, signal.symbol, signal.action.value, signal.price, signal.reason)
 
-        if not self.risk_manager.approve_signal():
+        if not self.risk_manager.approve_signal(trade_date):
             return
 
         if signal.action == Action.EXIT:
-            self._exit_position(signal)
+            self._exit_position(signal, trade_date)
             return
 
         if signal.stop_price is not None:
@@ -59,7 +61,7 @@ class TraderApp:
         if fill.status in ("FILLED", "PLACED"):
             self.open_positions[signal.symbol] = (fill.side, fill.quantity, fill.price)
 
-    def _exit_position(self, signal: Signal) -> None:
+    def _exit_position(self, signal: Signal, trade_date: str) -> None:
         position = self.open_positions.pop(signal.symbol, None)
         if position is None:
             return
@@ -75,16 +77,17 @@ class TraderApp:
 
         self.risk_manager.record_success()
         pnl = (fill.price - entry_price) * quantity if side == "BUY" else (entry_price - fill.price) * quantity
-        self.risk_manager.record_pnl(pnl)
+        self.risk_manager.record_pnl(trade_date, pnl)
 
-    def square_off_symbol(self, symbol: str, price: float) -> None:
+    def square_off_symbol(self, symbol: str, price: float, trade_date: str) -> None:
         if symbol not in self.open_positions:
             return
-        self._exit_position(Signal(self.strategy.name, symbol, Action.EXIT, price, reason="EOD square-off"))
+        self._exit_position(Signal(self.strategy.name, symbol, Action.EXIT, price, reason="EOD square-off"), trade_date)
 
     def square_off_all(self) -> None:
+        today = datetime.now().date().isoformat()
         for symbol, (side, quantity, entry_price) in list(self.open_positions.items()):
-            self.square_off_symbol(symbol, entry_price)
+            self.square_off_symbol(symbol, entry_price, today)
 
 
 def build_executor(mode: str) -> OrderExecutor:
@@ -136,12 +139,12 @@ def run_backtest() -> None:
             candle_date = candle["date"]
             day = candle_date.date().isoformat() if isinstance(candle_date, datetime) else str(candle_date)[:10]
             if current_day is not None and day != current_day:
-                app.square_off_symbol(symbol, last_close)
+                app.square_off_symbol(symbol, last_close, current_day)
             current_day = day
             last_close = candle["close"]
             app.handle_candle(symbol, candle)
         if last_close is not None:
-            app.square_off_symbol(symbol, last_close)
+            app.square_off_symbol(symbol, last_close, current_day)
 
 
 def run_live_or_paper() -> None:

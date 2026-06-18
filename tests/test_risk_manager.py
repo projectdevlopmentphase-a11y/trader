@@ -38,9 +38,9 @@ def test_position_size_zero_risk_returns_zero(risk_manager):
 
 
 def test_daily_loss_cap_halts_trading(risk_manager):
-    assert risk_manager.approve_signal() is True
-    risk_manager.record_pnl(-3500)  # exceeds 3% of 100000 = 3000
-    assert risk_manager.approve_signal() is False
+    assert risk_manager.approve_signal("2026-06-18") is True
+    risk_manager.record_pnl("2026-06-18", -3500)  # exceeds 3% of 100000 = 3000
+    assert risk_manager.approve_signal("2026-06-18") is False
 
 
 def test_kill_switch_trips_after_max_errors(risk_manager):
@@ -51,4 +51,4 @@ def test_kill_switch_trips_after_max_errors(risk_manager):
     with pytest.raises(KillSwitchTripped):
         risk_manager.record_error("test", "err3")
     assert risk_manager.is_killed is True
-    assert risk_manager.approve_signal() is False
+    assert risk_manager.approve_signal("2026-06-18") is False

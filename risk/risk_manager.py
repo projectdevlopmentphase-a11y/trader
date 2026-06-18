@@ -6,8 +6,6 @@ fill's P&L must go through `record_pnl` so the daily loss cap stays accurate.
 """
 from __future__ import annotations
 
-from datetime import date
-
 from storage.db import get_daily_pnl, is_halted, log_error, set_halted, update_daily_pnl
 
 
@@ -30,17 +28,13 @@ class RiskManager:
         self._consecutive_errors = 0
         self._killed = False
 
-    def _today(self) -> str:
-        return date.today().isoformat()
-
-    def daily_loss_cap_breached(self) -> bool:
-        today = self._today()
-        if is_halted(today):
+    def daily_loss_cap_breached(self, trade_date: str) -> bool:
+        if is_halted(trade_date):
             return True
         loss_cap = self.capital * (self.daily_loss_cap_pct / 100)
-        pnl = get_daily_pnl(today)
+        pnl = get_daily_pnl(trade_date)
         if pnl <= -loss_cap:
-            set_halted(today, True)
+            set_halted(trade_date, True)
             return True
         return False
 
@@ -52,16 +46,16 @@ class RiskManager:
             return 0
         return max(0, int(risk_amount / per_share_risk))
 
-    def approve_signal(self) -> bool:
+    def approve_signal(self, trade_date: str) -> bool:
         """Returns False if trading should be blocked right now (loss cap or kill switch)."""
         if self._killed:
             return False
-        if self.daily_loss_cap_breached():
+        if self.daily_loss_cap_breached(trade_date):
             return False
         return True
 
-    def record_pnl(self, pnl: float) -> float:
-        return update_daily_pnl(self._today(), pnl)
+    def record_pnl(self, trade_date: str, pnl: float) -> float:
+        return update_daily_pnl(trade_date, pnl)
 
     def record_error(self, source: str, message: str) -> None:
         log_error(source, message)
