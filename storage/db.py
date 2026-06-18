@@ -115,6 +115,18 @@ def log_trade(
         )
 
 
+def update_last_trade_pnl(symbol: str, pnl: float) -> None:
+    """Stamps the realized P&L onto the most recently logged trade row for
+    this symbol (the exit fill just recorded by log_trade)."""
+    with cursor() as cur:
+        cur.execute(
+            """UPDATE trades SET pnl = ? WHERE id = (
+                SELECT id FROM trades WHERE symbol = ? ORDER BY id DESC LIMIT 1
+            )""",
+            (pnl, symbol),
+        )
+
+
 def log_error(source: str, message: str) -> None:
     with cursor() as cur:
         cur.execute(

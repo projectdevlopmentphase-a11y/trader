@@ -12,7 +12,8 @@ from execution.base import OrderExecutor
 from execution.live import LiveExecutor
 from execution.paper import PaperExecutor
 from scheduler.scheduler import start_square_off_scheduler
-from storage.db import log_error, log_signal, reset_backtest_data
+from storage.db import log_error, log_signal, reset_backtest_data, update_last_trade_pnl
+from storage.report import print_report
 from strategy.base import Action, Signal
 from strategy.orb import ORBStrategy
 
@@ -82,6 +83,7 @@ class TraderApp:
         self.risk_manager.record_success()
         pnl = (fill.price - entry_price) * quantity if side == "BUY" else (entry_price - fill.price) * quantity
         self.risk_manager.record_pnl(trade_date, pnl)
+        update_last_trade_pnl(signal.symbol, pnl)
 
     def square_off_symbol(self, symbol: str, price: float, trade_date: str) -> None:
         if symbol not in self.open_positions:
@@ -195,6 +197,8 @@ def run_backtest() -> None:
             if day_candles:
                 last_close_per_symbol[symbol] = day_candles[-1]["close"]
 
+    print_report("backtest", app.open_positions)
+
 
 def run_live_or_paper() -> None:
     from auth.kite_auth import KiteAuth
@@ -265,6 +269,8 @@ def run_live_or_paper() -> None:
             time.sleep(5)
     except KeyboardInterrupt:
         ticker.stop()
+    finally:
+        print_report(settings.mode, app.open_positions)
 
 
 def main() -> None:
