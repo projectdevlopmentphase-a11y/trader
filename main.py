@@ -18,10 +18,14 @@ from strategy.orb import ORBStrategy
 
 
 class TraderApp:
-    def __init__(self, strategy, executor: OrderExecutor, risk_manager):
+    def __init__(self, strategy, executor: OrderExecutor, risk_manager, price_fetcher=None):
         self.strategy = strategy
         self.executor = executor
         self.risk_manager = risk_manager
+        # Looks up the current market price for a symbol, used at EOD
+        # square-off time. Falls back to entry_price (zero recorded P&L)
+        # only if no fetcher is wired up, e.g. in tests.
+        self.price_fetcher = price_fetcher
         # symbol -> (action, quantity, entry_price)
         self.open_positions: dict[str, tuple[str, int, float]] = {}
 
@@ -87,7 +91,16 @@ class TraderApp:
     def square_off_all(self) -> None:
         today = datetime.now().date().isoformat()
         for symbol, (side, quantity, entry_price) in list(self.open_positions.items()):
-            self.square_off_symbol(symbol, entry_price, today)
+            price = entry_price
+            if self.price_fetcher is not None:
+                fetched = self.price_fetcher(symbol)
+                if fetched:
+                    price = fetched
+                else:
+                    self.risk_manager.record_error(
+                        "square_off", f"could not fetch live price for {symbol}; squaring off at entry price"
+                    )
+            self.square_off_symbol(symbol, price, today)
 
 
 def build_executor(mode: str) -> OrderExecutor:
@@ -205,12 +218,21 @@ def run_live_or_paper() -> None:
         settings.max_consecutive_errors,
     )
     executor = build_executor(settings.mode)
-    app = TraderApp(strategy, executor, risk_manager)
-
-    start_square_off_scheduler(app.square_off_all)
 
     auth = KiteAuth()
     kite = auth.authenticated_client()
+
+    def fetch_ltp(symbol: str) -> float | None:
+        try:
+            quote = kite.ltp([f"NSE:{symbol}"])
+            return quote[f"NSE:{symbol}"]["last_price"]
+        except Exception as exc:
+            log_error("square_off", f"ltp fetch failed for {symbol}: {exc}")
+            return None
+
+    app = TraderApp(strategy, executor, risk_manager, price_fetcher=fetch_ltp)
+
+    start_square_off_scheduler(app.square_off_all)
 
     universe = settings.scan_universe or settings.watchlist
     candidates = scan_live_universe(kite, universe, settings.scan_lookback_days, settings.orb_candle_interval)
