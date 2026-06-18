@@ -27,6 +27,8 @@ class _SymbolState:
         self.range_low: float | None = None
         self.range_ready = False
         self.position: str | None = None  # "LONG" | "SHORT" | None
+        self.took_long = False
+        self.took_short = False
 
 
 class ORBStrategy(Strategy):
@@ -51,6 +53,8 @@ class ORBStrategy(Strategy):
             state.range_low = None
             state.range_ready = False
             state.position = None
+            state.took_long = False
+            state.took_short = False
 
         state.candles_seen += 1
 
@@ -64,11 +68,13 @@ class ORBStrategy(Strategy):
         close = candle["close"]
 
         if state.position is None:
-            if close > state.range_high:
+            if close > state.range_high and not state.took_long:
                 state.position = "LONG"
+                state.took_long = True
                 return Signal(self.name, symbol, Action.BUY, close, reason="breakout above opening range high", stop_price=state.range_low)
-            if close < state.range_low:
+            if close < state.range_low and not state.took_short:
                 state.position = "SHORT"
+                state.took_short = True
                 return Signal(self.name, symbol, Action.SELL, close, reason="breakdown below opening range low", stop_price=state.range_high)
             return None
 
