@@ -61,6 +61,29 @@ def group_candles_by_day(candles: list[dict]) -> dict[str, list[dict]]:
     return by_day
 
 
+def compute_narrow_range_days(by_day: dict[str, list[dict]], nr7_lookback: int) -> dict[str, bool]:
+    """For every day in a symbol's full candle history, determines whether
+    that day qualifies as an NR7-style entry day: the prior trading day's
+    range was the narrowest of the preceding nr7_lookback trading days.
+
+    Computed from the symbol's complete historical series so the result
+    doesn't depend on which days the symbol happened to be selected into a
+    watchlist -- unlike ORBStrategy's own internal tracking, which only
+    advances on candles it's actually fed.
+    """
+    if nr7_lookback <= 0:
+        return {day: True for day in by_day}
+
+    days = sorted(by_day.keys())
+    ranges = [max(c["high"] for c in by_day[day]) - min(c["low"] for c in by_day[day]) for day in days]
+
+    flags: dict[str, bool] = {}
+    for i, day in enumerate(days):
+        window = ranges[max(0, i - nr7_lookback) : i]
+        flags[day] = len(window) == nr7_lookback and ranges[i - 1] == min(window)
+    return flags
+
+
 def scan_backtest_day(
     candles_by_symbol_day: dict[str, dict[str, list[dict]]],
     all_days: list[str],

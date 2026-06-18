@@ -124,7 +124,7 @@ def run_backtest() -> None:
     from auth.kite_auth import KiteAuth
     from data.historical import fetch_historical_candles
     from risk.risk_manager import RiskManager
-    from strategy.scanner import group_candles_by_day, rank_candidates, scan_backtest_day
+    from strategy.scanner import compute_narrow_range_days, group_candles_by_day, rank_candidates, scan_backtest_day
 
     reset_backtest_data()
 
@@ -174,6 +174,14 @@ def run_backtest() -> None:
     backtest_start_day = backtest_start.date().isoformat()
     trading_days = [day for day in all_days if day >= backtest_start_day]
 
+    # Computed from each symbol's full fetched history (not just the days it
+    # gets selected into the watchlist), so the NR7 filter doesn't spend the
+    # first few months "warming up" before it can ever qualify a day.
+    narrow_range_days = {
+        symbol: compute_narrow_range_days(by_day, settings.orb_nr7_lookback)
+        for symbol, by_day in candles_by_symbol_day.items()
+    }
+
     last_close_per_symbol: dict[str, float] = {}
 
     for day in trading_days:
@@ -199,8 +207,9 @@ def run_backtest() -> None:
             ]
             if not tradable_candles:
                 continue
+            is_narrow_range_day = narrow_range_days[symbol].get(day, False)
             for candle in tradable_candles:
-                app.handle_candle(symbol, candle)
+                app.handle_candle(symbol, {**candle, "_narrow_range_day": is_narrow_range_day})
             app.square_off_symbol(symbol, tradable_candles[-1]["close"], day, ts=tradable_candles[-1]["date"])
 
         for symbol, by_day in candles_by_symbol_day.items():

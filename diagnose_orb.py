@@ -18,7 +18,7 @@ from config.settings import settings
 from data.historical import fetch_historical_candles
 from strategy.base import Action
 from strategy.orb import ORBStrategy
-from strategy.scanner import group_candles_by_day, rank_candidates, scan_backtest_day
+from strategy.scanner import compute_narrow_range_days, group_candles_by_day, rank_candidates, scan_backtest_day
 
 auth = KiteAuth()
 kite = auth.authenticated_client()
@@ -46,6 +46,11 @@ for symbol in universe:
 all_days = sorted({day for by_day in candles_by_symbol_day.values() for day in by_day})
 backtest_start_day = backtest_start.date().isoformat()
 trading_days = [day for day in all_days if day >= backtest_start_day]
+
+narrow_range_days = {
+    symbol: compute_narrow_range_days(by_day, settings.orb_nr7_lookback)
+    for symbol, by_day in candles_by_symbol_day.items()
+}
 
 strategy = ORBStrategy(
     settings.orb_range_minutes,
@@ -79,14 +84,13 @@ for day in trading_days:
         if not tradable_candles:
             continue
 
-        state_before = strategy._state.get(symbol)
+        is_narrow_range_day = narrow_range_days[symbol].get(day, False)
         for candle in tradable_candles:
-            signal = strategy.on_candle(symbol, candle)
+            signal = strategy.on_candle(symbol, {**candle, "_narrow_range_day": is_narrow_range_day})
             if signal is not None and signal.action in (Action.BUY, Action.SELL):
                 entries_by_month[month] += 1
 
-        state = strategy._state.get(symbol)
-        if state is not None and state.narrow_range_day:
+        if is_narrow_range_day:
             narrow_open_by_month[month] += 1
 
     for symbol, by_day in candles_by_symbol_day.items():

@@ -127,7 +127,14 @@ class ORBStrategy(Strategy):
         state.volumes.append(volume)
 
         cutoff_ok = self.entry_cutoff is None or candle_time is None or candle_time <= self.entry_cutoff
-        entries_allowed = volume_ok and state.narrow_range_day and cutoff_ok
+        # In backtest, the caller precomputes narrow-range-day from each
+        # symbol's full historical series (see scanner.compute_narrow_range_days)
+        # and stamps it on the candle, since this strategy instance only ever
+        # sees candles for days a symbol was actually selected into the
+        # watchlist -- not enough to track NR7 history on its own.
+        external_narrow_range_day = candle.get("_narrow_range_day")
+        narrow_range_ok = state.narrow_range_day if external_narrow_range_day is None else external_narrow_range_day
+        entries_allowed = volume_ok and narrow_range_ok and cutoff_ok
 
         if state.position is None:
             if entries_allowed and close > state.range_high and not state.took_long:
