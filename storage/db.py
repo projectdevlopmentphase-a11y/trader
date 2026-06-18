@@ -76,11 +76,22 @@ def cursor():
         cur.close()
 
 
-def log_signal(strategy: str, symbol: str, action: str, price: float | None, meta: str = "") -> None:
+def _format_ts(ts) -> str:
+    """Renders a candle's own date/time (market time) as the row's ts,
+    falling back to wall-clock time only when no candle time is available
+    (e.g. a signal/fill with no associated candle)."""
+    if ts is None:
+        return datetime.now().isoformat()
+    if isinstance(ts, datetime):
+        return ts.isoformat()
+    return str(ts)
+
+
+def log_signal(strategy: str, symbol: str, action: str, price: float | None, meta: str = "", ts=None) -> None:
     with cursor() as cur:
         cur.execute(
             "INSERT INTO signals (ts, strategy, symbol, action, price, meta) VALUES (?, ?, ?, ?, ?, ?)",
-            (datetime.now().isoformat(), strategy, symbol, action, price, meta),
+            (_format_ts(ts), strategy, symbol, action, price, meta),
         )
 
 
@@ -94,6 +105,7 @@ def log_trade(
     status: str,
     order_id: str | None = None,
     pnl: float | None = None,
+    ts=None,
 ) -> None:
     with cursor() as cur:
         cur.execute(
@@ -101,7 +113,7 @@ def log_trade(
             (ts, mode, strategy, symbol, side, quantity, price, order_id, status, pnl)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                datetime.now().isoformat(),
+                _format_ts(ts),
                 mode,
                 strategy,
                 symbol,

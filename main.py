@@ -39,7 +39,7 @@ class TraderApp:
         self._handle_signal(signal, trade_date)
 
     def _handle_signal(self, signal: Signal, trade_date: str) -> None:
-        log_signal(signal.strategy, signal.symbol, signal.action.value, signal.price, signal.reason)
+        log_signal(signal.strategy, signal.symbol, signal.action.value, signal.price, signal.reason, ts=signal.ts)
 
         if not self.risk_manager.approve_signal(trade_date):
             return
@@ -72,7 +72,7 @@ class TraderApp:
             return
         side, quantity, entry_price = position
         exit_side = Action.SELL if side == "BUY" else Action.BUY
-        exit_signal = Signal(signal.strategy, signal.symbol, exit_side, signal.price, reason=signal.reason)
+        exit_signal = Signal(signal.strategy, signal.symbol, exit_side, signal.price, reason=signal.reason, ts=signal.ts)
 
         try:
             fill = self.executor.execute(exit_signal, quantity)
@@ -85,13 +85,14 @@ class TraderApp:
         self.risk_manager.record_pnl(trade_date, pnl)
         update_last_trade_pnl(signal.symbol, pnl)
 
-    def square_off_symbol(self, symbol: str, price: float, trade_date: str) -> None:
+    def square_off_symbol(self, symbol: str, price: float, trade_date: str, ts=None) -> None:
         if symbol not in self.open_positions:
             return
-        self._exit_position(Signal(self.strategy.name, symbol, Action.EXIT, price, reason="EOD square-off"), trade_date)
+        self._exit_position(Signal(self.strategy.name, symbol, Action.EXIT, price, reason="EOD square-off", ts=ts), trade_date)
 
     def square_off_all(self) -> None:
-        today = datetime.now().date().isoformat()
+        now = datetime.now()
+        today = now.date().isoformat()
         for symbol, (side, quantity, entry_price) in list(self.open_positions.items()):
             price = entry_price
             if self.price_fetcher is not None:
@@ -102,7 +103,7 @@ class TraderApp:
                     self.risk_manager.record_error(
                         "square_off", f"could not fetch live price for {symbol}; squaring off at entry price"
                     )
-            self.square_off_symbol(symbol, price, today)
+            self.square_off_symbol(symbol, price, today, ts=now)
 
 
 def build_executor(mode: str) -> OrderExecutor:
@@ -190,7 +191,7 @@ def run_backtest() -> None:
             day_candles = candles_by_symbol_day[symbol][day]
             for candle in day_candles:
                 app.handle_candle(symbol, candle)
-            app.square_off_symbol(symbol, day_candles[-1]["close"], day)
+            app.square_off_symbol(symbol, day_candles[-1]["close"], day, ts=day_candles[-1]["date"])
 
         for symbol, by_day in candles_by_symbol_day.items():
             day_candles = by_day.get(day)

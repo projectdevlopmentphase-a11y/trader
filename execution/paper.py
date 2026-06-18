@@ -23,5 +23,5 @@ class PaperExecutor(OrderExecutor):
             order_id=None,
             status="FILLED",
         )
-        log_trade(self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, "FILLED")
+        log_trade(self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, "FILLED", ts=signal.ts)
         return fill

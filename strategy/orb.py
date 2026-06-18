@@ -133,18 +133,18 @@ class ORBStrategy(Strategy):
             if entries_allowed and close > state.range_high and not state.took_long:
                 state.position = "LONG"
                 state.took_long = True
-                return Signal(self.name, symbol, Action.BUY, close, reason="breakout above opening range high", stop_price=state.range_low)
+                return Signal(self.name, symbol, Action.BUY, close, reason="breakout above opening range high", stop_price=state.range_low, ts=candle_date)
             if entries_allowed and close < state.range_low and not state.took_short:
                 state.position = "SHORT"
                 state.took_short = True
-                return Signal(self.name, symbol, Action.SELL, close, reason="breakdown below opening range low", stop_price=state.range_high)
+                return Signal(self.name, symbol, Action.SELL, close, reason="breakdown below opening range low", stop_price=state.range_high, ts=candle_date)
             return None
 
         if state.position == "LONG" and close < state.range_low:
             state.position = None
-            return Signal(self.name, symbol, Action.EXIT, close, reason="reversal below opening range low")
+            return Signal(self.name, symbol, Action.EXIT, close, reason="reversal below opening range low", ts=candle_date)
         if state.position == "SHORT" and close > state.range_high:
             state.position = None
-            return Signal(self.name, symbol, Action.EXIT, close, reason="reversal above opening range high")
+            return Signal(self.name, symbol, Action.EXIT, close, reason="reversal above opening range high", ts=candle_date)
 
         return None

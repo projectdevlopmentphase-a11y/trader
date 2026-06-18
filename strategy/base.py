@@ -23,6 +23,9 @@ class Signal:
     price: float
     reason: str = ""
     stop_price: float | None = None
+    # The candle's own date/time that triggered this signal (market time),
+    # not wall-clock time -- crucial in backtest where they're unrelated.
+    ts: object = None
 
 
 class Strategy(ABC):

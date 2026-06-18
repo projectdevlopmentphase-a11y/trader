@@ -48,5 +48,5 @@ class LiveExecutor(OrderExecutor):
             order_id=order_id,
             status=status,
         )
-        log_trade(self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, status, order_id=order_id)
+        log_trade(self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, status, order_id=order_id, ts=signal.ts)
         return fill
