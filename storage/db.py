@@ -181,3 +181,4 @@ def reset_backtest_data() -> None:
         cur.execute("DELETE FROM signals")
         cur.execute("DELETE FROM trades")
         cur.execute("DELETE FROM daily_pnl")
+        cur.execute("DELETE FROM errors")
