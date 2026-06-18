@@ -64,6 +64,9 @@ strategy = ORBStrategy(
 watchlist_days_by_month = Counter()
 narrow_open_by_month = Counter()
 entries_by_month = Counter()
+watchlist_by_symbol_month = Counter()
+narrow_open_by_symbol_month = Counter()
+entries_by_symbol_month = Counter()
 last_close_per_symbol = {}
 
 for day in trading_days:
@@ -77,6 +80,7 @@ for day in trading_days:
 
     for symbol in todays_watchlist:
         watchlist_days_by_month[month] += 1
+        watchlist_by_symbol_month[(symbol, month)] += 1
         day_candles = candles_by_symbol_day[symbol][day]
         tradable_candles = [
             c for c in day_candles if not isinstance(c["date"], datetime) or c["date"].time() <= square_off_cutoff
@@ -89,9 +93,11 @@ for day in trading_days:
             signal = strategy.on_candle(symbol, {**candle, "_narrow_range_day": is_narrow_range_day})
             if signal is not None and signal.action in (Action.BUY, Action.SELL):
                 entries_by_month[month] += 1
+                entries_by_symbol_month[(symbol, month)] += 1
 
         if is_narrow_range_day:
             narrow_open_by_month[month] += 1
+            narrow_open_by_symbol_month[(symbol, month)] += 1
 
     for symbol, by_day in candles_by_symbol_day.items():
         day_candles = by_day.get(day)
@@ -102,3 +108,14 @@ months = sorted(set(watchlist_days_by_month) | set(narrow_open_by_month) | set(e
 print(f"{'month':<10}{'watchlist_slots':>16}{'narrow_open':>14}{'entries':>10}")
 for month in months:
     print(f"{month:<10}{watchlist_days_by_month[month]:>16}{narrow_open_by_month[month]:>14}{entries_by_month[month]:>10}")
+
+print("\nPer-symbol per-month breakdown:")
+print(f"{'symbol':<14}{'month':<10}{'watchlist_slots':>16}{'narrow_open':>14}{'entries':>10}")
+for symbol in universe:
+    for month in months:
+        slots = watchlist_by_symbol_month.get((symbol, month), 0)
+        if slots == 0:
+            continue
+        narrow = narrow_open_by_symbol_month.get((symbol, month), 0)
+        entries = entries_by_symbol_month.get((symbol, month), 0)
+        print(f"{symbol:<14}{month:<10}{slots:>16}{narrow:>14}{entries:>10}")
