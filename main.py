@@ -4,7 +4,7 @@ together for whichever mode is configured, and registers the EOD square-off.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta
 
 from config.settings import settings
 from execution.backtest import BacktestExecutor
@@ -152,6 +152,8 @@ def run_backtest() -> None:
 
     universe = settings.scan_universe or settings.watchlist
     range_candles = max(1, settings.orb_range_minutes // int(settings.orb_candle_interval.replace("minute", "") or 1))
+    square_off_hour, square_off_minute = (int(part) for part in settings.square_off_time.split(":"))
+    square_off_cutoff = dt_time(square_off_hour, square_off_minute)
 
     # Fetch extra history before the backtest window so the relative-volume
     # baseline has lookback data even on the first simulated day.
@@ -189,9 +191,17 @@ def run_backtest() -> None:
 
         for symbol in todays_watchlist:
             day_candles = candles_by_symbol_day[symbol][day]
-            for candle in day_candles:
+            # Mirror the live bot's scheduled square-off: don't simulate
+            # trading past SQUARE_OFF_TIME, so backtest P&L doesn't include
+            # price movement the live bot would never actually capture.
+            tradable_candles = [
+                c for c in day_candles if not isinstance(c["date"], datetime) or c["date"].time() <= square_off_cutoff
+            ]
+            if not tradable_candles:
+                continue
+            for candle in tradable_candles:
                 app.handle_candle(symbol, candle)
-            app.square_off_symbol(symbol, day_candles[-1]["close"], day, ts=day_candles[-1]["date"])
+            app.square_off_symbol(symbol, tradable_candles[-1]["close"], day, ts=tradable_candles[-1]["date"])
 
         for symbol, by_day in candles_by_symbol_day.items():
             day_candles = by_day.get(day)
