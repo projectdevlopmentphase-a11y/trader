@@ -105,23 +105,36 @@ def scan_live_universe(
     kite,
     universe: list[str],
     lookback_days: int = 20,
+    interval: str = "5minute",
     exchange: str = "NSE",
+    now: datetime | None = None,
 ) -> list[ScanCandidate]:
     """Scans the universe right now using Kite's quote API for today's open/
-    volume-so-far/previous-close, and daily historical candles for the
-    average-volume baseline. Meant to be called once shortly after market
-    open (e.g. after the opening range completes) at the start of each
-    trading day's run.
+    volume-so-far/previous-close. Meant to be called once shortly after
+    market open (e.g. after the opening range completes) at the start of
+    each trading day's run.
+
+    Today's volume-so-far only covers however much of the session has
+    elapsed, so the baseline must be the average volume traded in that SAME
+    elapsed window (e.g. 9:15-9:30) over the lookback days -- comparing it
+    against a full trading day's average would make relative volume read
+    "low" for almost every symbol early in the session, regardless of
+    actual activity.
     """
     from datetime import timedelta
+
+    from data.historical import fetch_historical_candles
+
+    now = now or datetime.now()
+    cutoff_time = now.time()
 
     instruments = [f"{exchange}:{symbol}" for symbol in universe]
     quotes = kite.quote(instruments)
 
     instrument_map = {i["tradingsymbol"]: i["instrument_token"] for i in kite.instruments(exchange)}
 
-    to_date = datetime.now()
-    from_date = to_date - timedelta(days=lookback_days * 2 + 5)
+    from_date = now - timedelta(days=lookback_days * 2 + 10)
+    to_date = now - timedelta(days=1)  # prior days only, for the baseline
 
     candidates: list[ScanCandidate] = []
     for symbol in universe:
@@ -133,17 +146,27 @@ def scan_live_universe(
         ohlc = quote.get("ohlc", {})
         prev_close = ohlc.get("close")
         today_open = ohlc.get("open")
-        today_volume = quote.get("volume", 0)
+        today_volume_so_far = quote.get("volume", 0)
         if not prev_close or not today_open:
             continue
 
-        daily_candles = kite.historical_data(token, from_date, to_date, "day")
-        volumes = [c["volume"] for c in daily_candles[-lookback_days:] if c.get("volume")]
-        if len(volumes) < lookback_days:
-            continue
-        avg_daily_volume = sum(volumes) / len(volumes)
+        intraday_candles = fetch_historical_candles(kite, token, from_date, to_date, interval)
+        by_day = group_candles_by_day(intraday_candles)
 
-        candidate = build_candidate(symbol, prev_close, today_open, today_volume, avg_daily_volume)
+        elapsed_volumes = []
+        for day_candles in by_day.values():
+            elapsed = sum(
+                c["volume"]
+                for c in day_candles
+                if not isinstance(c["date"], datetime) or c["date"].time() <= cutoff_time
+            )
+            elapsed_volumes.append(elapsed)
+        elapsed_volumes = elapsed_volumes[-lookback_days:]
+        if len(elapsed_volumes) < lookback_days:
+            continue
+        avg_elapsed_volume = sum(elapsed_volumes) / len(elapsed_volumes)
+
+        candidate = build_candidate(symbol, prev_close, today_open, today_volume_so_far, avg_elapsed_volume)
         if candidate is not None:
             candidates.append(candidate)
 

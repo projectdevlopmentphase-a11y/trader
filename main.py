@@ -213,7 +213,7 @@ def run_live_or_paper() -> None:
     kite = auth.authenticated_client()
 
     universe = settings.scan_universe or settings.watchlist
-    candidates = scan_live_universe(kite, universe, settings.scan_lookback_days)
+    candidates = scan_live_universe(kite, universe, settings.scan_lookback_days, settings.orb_candle_interval)
     todays_watchlist = rank_candidates(
         candidates, settings.scan_top_n, settings.scan_min_relative_volume, settings.scan_min_gap_pct
     )
