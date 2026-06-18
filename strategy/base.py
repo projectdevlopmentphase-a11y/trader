@@ -22,6 +22,7 @@ class Signal:
     action: Action
     price: float
     reason: str = ""
+    stop_price: float | None = None
 
 
 class Strategy(ABC):

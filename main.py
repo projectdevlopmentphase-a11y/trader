@@ -41,7 +41,10 @@ class TraderApp:
             self._exit_position(signal)
             return
 
-        stop_loss_price = signal.price * (0.99 if signal.action == Action.BUY else 1.01)
+        if signal.stop_price is not None:
+            stop_loss_price = signal.stop_price
+        else:
+            stop_loss_price = signal.price * (0.99 if signal.action == Action.BUY else 1.01)
         quantity = self.risk_manager.position_size(signal.price, stop_loss_price)
         if quantity <= 0:
             return
@@ -74,9 +77,14 @@ class TraderApp:
         pnl = (fill.price - entry_price) * quantity if side == "BUY" else (entry_price - fill.price) * quantity
         self.risk_manager.record_pnl(pnl)
 
+    def square_off_symbol(self, symbol: str, price: float) -> None:
+        if symbol not in self.open_positions:
+            return
+        self._exit_position(Signal(self.strategy.name, symbol, Action.EXIT, price, reason="EOD square-off"))
+
     def square_off_all(self) -> None:
         for symbol, (side, quantity, entry_price) in list(self.open_positions.items()):
-            self._exit_position(Signal(self.strategy.name, symbol, Action.EXIT, entry_price, reason="EOD square-off"))
+            self.square_off_symbol(symbol, entry_price)
 
 
 def build_executor(mode: str) -> OrderExecutor:
@@ -122,8 +130,18 @@ def run_backtest() -> None:
             log_error("backtest", f"unknown symbol {symbol}")
             continue
         candles = fetch_historical_candles(kite, token, from_date, to_date, settings.orb_candle_interval)
+        current_day = None
+        last_close = None
         for candle in candles:
+            candle_date = candle["date"]
+            day = candle_date.date().isoformat() if isinstance(candle_date, datetime) else str(candle_date)[:10]
+            if current_day is not None and day != current_day:
+                app.square_off_symbol(symbol, last_close)
+            current_day = day
+            last_close = candle["close"]
             app.handle_candle(symbol, candle)
+        if last_close is not None:
+            app.square_off_symbol(symbol, last_close)
 
 
 def run_live_or_paper() -> None:
