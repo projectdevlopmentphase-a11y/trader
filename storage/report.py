@@ -22,13 +22,13 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
     lines.append("=" * 60)
 
     trades = _fetch_all(
-        "SELECT symbol, side, quantity, price, pnl, status FROM trades WHERE mode = ? ORDER BY id",
+        "SELECT ts, symbol, side, quantity, price, pnl, status FROM trades WHERE mode = ? ORDER BY id",
         (mode,),
     )
-    closed_trades = [t for t in trades if t[4] is not None]
-    total_pnl = sum(t[4] for t in closed_trades)
-    wins = [t for t in closed_trades if t[4] > 0]
-    losses = [t for t in closed_trades if t[4] < 0]
+    closed_trades = [t for t in trades if t[5] is not None]
+    total_pnl = sum(t[5] for t in closed_trades)
+    wins = [t for t in closed_trades if t[5] > 0]
+    losses = [t for t in closed_trades if t[5] < 0]
     win_rate = (len(wins) / len(closed_trades) * 100) if closed_trades else 0.0
 
     lines.append(f"Total trade legs (entries + exits): {len(trades)}")
@@ -36,8 +36,8 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
     lines.append(f"Wins: {len(wins)}  Losses: {len(losses)}  Win rate: {win_rate:.1f}%")
     lines.append(f"Total realized P&L: {total_pnl:.2f}")
     if closed_trades:
-        avg_win = sum(t[4] for t in wins) / len(wins) if wins else 0.0
-        avg_loss = sum(t[4] for t in losses) / len(losses) if losses else 0.0
+        avg_win = sum(t[5] for t in wins) / len(wins) if wins else 0.0
+        avg_loss = sum(t[5] for t in losses) / len(losses) if losses else 0.0
         lines.append(f"Avg win: {avg_win:.2f}  Avg loss: {avg_loss:.2f}")
 
     by_symbol = _fetch_all(
@@ -72,6 +72,15 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
     errors = _fetch_all("SELECT COUNT(*) FROM errors")
     lines.append(f"Errors logged: {errors[0][0]}")
     lines.append("=" * 60)
+
+    if trades:
+        lines.append("")
+        lines.append("All trades:")
+        lines.append(f"  {'ts':<28}{'symbol':<12}{'side':<6}{'qty':>6}  {'price':>10}  {'pnl':>10}  status")
+        for ts, symbol, side, quantity, price, pnl, status in trades:
+            pnl_str = f"{pnl:.2f}" if pnl is not None else "-"
+            lines.append(f"  {ts:<28}{symbol:<12}{side:<6}{quantity:>6}  {price:>10.2f}  {pnl_str:>10}  {status}")
+        lines.append("=" * 60)
 
     return "\n".join(lines)
 
