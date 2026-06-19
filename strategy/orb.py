@@ -44,6 +44,7 @@ class _SymbolState:
         self.range_low: float | None = None
         self.range_ready = False
         self.position: str | None = None  # "LONG" | "SHORT" | None
+        self.stop_price: float | None = None
         self.took_long = False
         self.took_short = False
         self.day_high: float | None = None
@@ -99,6 +100,7 @@ class ORBStrategy(Strategy):
             state.range_low = None
             state.range_ready = False
             state.position = None
+            state.stop_price = None
             state.took_long = False
             state.took_short = False
             state.day_high = None
@@ -140,18 +142,24 @@ class ORBStrategy(Strategy):
             if entries_allowed and close > state.range_high and not state.took_long:
                 state.position = "LONG"
                 state.took_long = True
+                state.stop_price = state.range_low
                 return Signal(self.name, symbol, Action.BUY, close, reason="breakout above opening range high", stop_price=state.range_low, ts=candle_date)
             if entries_allowed and close < state.range_low and not state.took_short:
                 state.position = "SHORT"
                 state.took_short = True
+                state.stop_price = state.range_high
                 return Signal(self.name, symbol, Action.SELL, close, reason="breakdown below opening range low", stop_price=state.range_high, ts=candle_date)
             return None
 
-        if state.position == "LONG" and close < state.range_low:
+        # Intrabar stop: exit as soon as the candle's high/low touches the
+        # stop level, rather than waiting for a close beyond it -- a close-
+        # only check lets a position ride through the whole candle even
+        # after the stop has already been breached intraday.
+        if state.position == "LONG" and candle["low"] <= state.stop_price:
             state.position = None
-            return Signal(self.name, symbol, Action.EXIT, close, reason="reversal below opening range low", ts=candle_date)
-        if state.position == "SHORT" and close > state.range_high:
+            return Signal(self.name, symbol, Action.EXIT, state.stop_price, reason="stop-loss hit", ts=candle_date)
+        if state.position == "SHORT" and candle["high"] >= state.stop_price:
             state.position = None
-            return Signal(self.name, symbol, Action.EXIT, close, reason="reversal above opening range high", ts=candle_date)
+            return Signal(self.name, symbol, Action.EXIT, state.stop_price, reason="stop-loss hit", ts=candle_date)
 
         return None
