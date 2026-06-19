@@ -74,6 +74,8 @@ class TraderApp:
 
         qty_a, qty_b = self.risk_manager.pairs_position_size(signal.price, signal.leg2_price, signal.hedge_ratio)
         if qty_a <= 0 or qty_b <= 0:
+            if hasattr(self.strategy, "cancel_pair"):
+                self.strategy.cancel_pair(signal.pair_id)
             return
         try:
             fill_a = self.executor.execute(signal, qty_a)
@@ -240,6 +242,7 @@ def run_backtest() -> None:
         settings.risk_pct_per_trade,
         settings.daily_loss_cap_pct,
         settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
     )
     app = TraderApp(strategy, BacktestExecutor(), risk_manager)
 
@@ -352,6 +355,7 @@ def run_backtest_pairs() -> None:
         settings.risk_pct_per_trade,
         settings.daily_loss_cap_pct,
         settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
     )
     app = TraderApp(strategy, BacktestExecutor(), risk_manager)
 
@@ -437,6 +441,7 @@ def run_live_or_paper() -> None:
         settings.risk_pct_per_trade,
         settings.daily_loss_cap_pct,
         settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
     )
     executor = build_executor(settings.mode)
 

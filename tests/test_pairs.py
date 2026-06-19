@@ -93,3 +93,25 @@ def test_unrelated_symbol_produces_no_signal():
     base = datetime(2024, 1, 1, 9, 15)
     signal = strategy.on_candle("C", make_candle(0, 100, base))
     assert signal is None
+
+
+def test_cancel_pair_allows_reentry_after_failed_sizing():
+    pair = PairConfig("A", "B", hedge_ratio=1.0)
+    strategy = PairsStrategy([pair], spread_lookback=20, entry_z=2.0, exit_z=0.5)
+    base = datetime(2024, 1, 1, 9, 15)
+
+    prices_a = [100] * 20 + [90]
+    prices_b = [100] * 21
+    signals = feed_day(strategy, base, prices_a, prices_b)
+    assert len(signals) == 1  # entry fired, state.position is now set
+
+    # Caller couldn't actually open the position (e.g. sizing rounded to 0).
+    strategy.cancel_pair(pair.pair_id)
+
+    # A later candle in the same z-extreme zone can fire another entry,
+    # rather than being stuck waiting for a mean-reversion exit that will
+    # never come for a position that was never actually opened.
+    extra_base = base + timedelta(minutes=len(prices_a) * 5)
+    more_signals = feed_day(strategy, extra_base, [90], [100])
+    assert len(more_signals) == 1
+    assert more_signals[0].action.value == "BUY"

@@ -37,11 +37,12 @@ def test_position_size_zero_risk_returns_zero(risk_manager):
     assert risk_manager.position_size(entry_price=100, stop_loss_price=100) == 0
 
 
-def test_pairs_position_size_splits_risk_and_scales_by_hedge_ratio(risk_manager):
-    # risk amount = 1000, split 500/leg. qty_a = 500/100 = 5, qty_b = 5 * 2.0 = 10
+def test_pairs_position_size_uses_notional_and_scales_by_hedge_ratio(risk_manager):
+    # total_notional = 10% of 100000 = 10000; combined leg cost per unit =
+    # price_a + hedge_ratio * price_b = 100 + 2*50 = 200 -> qty_a = 50, qty_b = 100
     qty_a, qty_b = risk_manager.pairs_position_size(price_a=100, price_b=50, hedge_ratio=2.0)
-    assert qty_a == 5
-    assert qty_b == 10
+    assert qty_a == 50
+    assert qty_b == 100
 
 
 def test_pairs_position_size_zero_price_returns_zero(risk_manager):

@@ -119,6 +119,12 @@ class Settings:
     )
     pairs_entry_z: float = field(default_factory=lambda: float(os.getenv("PAIRS_ENTRY_Z", "2.0")))
     pairs_exit_z: float = field(default_factory=lambda: float(os.getenv("PAIRS_EXIT_Z", "0.5")))
+    # Target combined notional exposure for both legs of a pairs trade, as a
+    # % of capital. Pairs have no stop-loss price to size off (they exit on
+    # mean reversion), so this replaces risk_pct_per_trade for sizing.
+    pairs_capital_pct: float = field(
+        default_factory=lambda: float(os.getenv("PAIRS_CAPITAL_PCT", "10.0"))
+    )
 
     market_protection_pct: float = field(
         default_factory=lambda: float(os.getenv("MARKET_PROTECTION_PCT", "1.0"))

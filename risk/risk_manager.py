@@ -20,11 +20,13 @@ class RiskManager:
         risk_pct_per_trade: float,
         daily_loss_cap_pct: float,
         max_consecutive_errors: int,
+        pairs_capital_pct: float = 10.0,
     ):
         self.capital = capital
         self.risk_pct_per_trade = risk_pct_per_trade
         self.daily_loss_cap_pct = daily_loss_cap_pct
         self.max_consecutive_errors = max_consecutive_errors
+        self.pairs_capital_pct = pairs_capital_pct
         self._consecutive_errors = 0
         self._killed = False
 
@@ -47,14 +49,15 @@ class RiskManager:
         return max(0, int(risk_amount / per_share_risk))
 
     def pairs_position_size(self, price_a: float, price_b: float, hedge_ratio: float) -> tuple[int, int]:
-        """Shares for both legs of a pairs trade, splitting the per-trade risk
-        amount evenly across the two legs and keeping the position beta-neutral
-        (leg B's quantity scaled by hedge_ratio relative to leg A's)."""
-        risk_amount = self.capital * (self.risk_pct_per_trade / 100)
+        """Shares for both legs of a pairs trade. Pairs have no stop-loss
+        price to size off (they exit on mean reversion, not a price stop),
+        so sizing here is notional-based: pairs_capital_pct of capital is the
+        target combined exposure across both legs, split so the position
+        stays beta-neutral per hedge_ratio (qty_b = qty_a * hedge_ratio)."""
         if price_a <= 0 or price_b <= 0:
             return 0, 0
-        notional_per_leg = risk_amount / 2
-        qty_a = int(notional_per_leg / price_a)
+        total_notional = self.capital * (self.pairs_capital_pct / 100)
+        qty_a = int(total_notional / (price_a + hedge_ratio * price_b))
         qty_b = int(qty_a * hedge_ratio)
         return max(0, qty_a), max(0, qty_b)
 

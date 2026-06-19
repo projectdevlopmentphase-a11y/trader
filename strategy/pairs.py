@@ -77,6 +77,15 @@ class PairsStrategy(Strategy):
         # Every z-score computed, kept for diagnostics (e.g. tuning entry_z).
         self.z_history: dict[str, list[float]] = {pair.pair_id: [] for pair in pairs}
 
+    def cancel_pair(self, pair_id: str) -> None:
+        """Reverts a pending entry that the caller couldn't actually open
+        (e.g. position sizing rounded to 0 shares), so the next candle is
+        still free to re-evaluate entry instead of being stuck thinking a
+        position is already open."""
+        state = self._state.get(pair_id)
+        if state is not None:
+            state.position = None
+
     def on_candle(self, symbol: str, candle: dict) -> Signal | None:
         pair = self._symbol_to_pair.get(symbol)
         if pair is None:
