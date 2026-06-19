@@ -84,6 +84,50 @@ def compute_narrow_range_days(by_day: dict[str, list[dict]], nr7_lookback: int) 
     return flags
 
 
+def compute_window_volumes(by_day: dict[str, list[dict]], window_minutes: int) -> dict[str, float]:
+    """Total traded volume in the first `window_minutes` of each day in a
+    symbol's full candle history, keyed by day."""
+    volumes: dict[str, float] = {}
+    for day, candles in by_day.items():
+        if not candles:
+            continue
+        start = candles[0]["date"]
+        total = 0.0
+        for candle in candles:
+            d = candle["date"]
+            elapsed = (d - start).total_seconds() / 60 if isinstance(d, datetime) else 0
+            if elapsed >= window_minutes:
+                break
+            total += candle["volume"]
+        volumes[day] = total
+    return volumes
+
+
+def compute_volume_ok_days(
+    by_day: dict[str, list[dict]], window_minutes: int, volume_multiplier: float, volume_lookback: int
+) -> dict[str, bool]:
+    """For every day in a symbol's full history, whether that day's opening-
+    window volume cleared volume_multiplier times the trailing volume_lookback
+    days' average -- computed from the complete series so it doesn't depend
+    on which days the symbol happened to be selected into a watchlist (the
+    same gating bug that affected ORBStrategy's NR7 filter; see
+    compute_narrow_range_days)."""
+    if volume_multiplier <= 0:
+        return {day: True for day in by_day}
+
+    window_volumes = compute_window_volumes(by_day, window_minutes)
+    days = sorted(by_day.keys())
+    flags: dict[str, bool] = {}
+    for i, day in enumerate(days):
+        lookback = [window_volumes[d] for d in days[max(0, i - volume_lookback) : i]]
+        if len(lookback) < volume_lookback:
+            flags[day] = False
+            continue
+        avg = sum(lookback) / len(lookback)
+        flags[day] = window_volumes[day] >= volume_multiplier * avg
+    return flags
+
+
 def scan_backtest_day(
     candles_by_symbol_day: dict[str, dict[str, list[dict]]],
     all_days: list[str],
