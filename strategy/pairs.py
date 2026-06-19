@@ -74,6 +74,8 @@ class PairsStrategy(Strategy):
         self._state: dict[str, _PairState] = {
             pair.pair_id: _PairState(spread_lookback) for pair in pairs
         }
+        # Every z-score computed, kept for diagnostics (e.g. tuning entry_z).
+        self.z_history: dict[str, list[float]] = {pair.pair_id: [] for pair in pairs}
 
     def on_candle(self, symbol: str, candle: dict) -> Signal | None:
         pair = self._symbol_to_pair.get(symbol)
@@ -105,6 +107,7 @@ class PairsStrategy(Strategy):
         if std == 0:
             return None
         z = (spread - mean) / std
+        self.z_history[pair.pair_id].append(z)
 
         if state.position is None:
             if z <= -self.entry_z:
