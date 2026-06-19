@@ -26,6 +26,14 @@ class Signal:
     # The candle's own date/time that triggered this signal (market time),
     # not wall-clock time -- crucial in backtest where they're unrelated.
     ts: object = None
+    # Pairs-trading legs: when pair_id is set, this signal represents a single
+    # two-leg position (this symbol is leg 1) that must be opened/closed as
+    # one unit -- see TraderApp._handle_pair_signal in main.py.
+    pair_id: str | None = None
+    leg2_symbol: str | None = None
+    leg2_action: Action | None = None
+    leg2_price: float | None = None
+    hedge_ratio: float | None = None
 
 
 class Strategy(ABC):

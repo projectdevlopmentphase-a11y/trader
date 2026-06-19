@@ -37,6 +37,17 @@ def test_position_size_zero_risk_returns_zero(risk_manager):
     assert risk_manager.position_size(entry_price=100, stop_loss_price=100) == 0
 
 
+def test_pairs_position_size_splits_risk_and_scales_by_hedge_ratio(risk_manager):
+    # risk amount = 1000, split 500/leg. qty_a = 500/100 = 5, qty_b = 5 * 2.0 = 10
+    qty_a, qty_b = risk_manager.pairs_position_size(price_a=100, price_b=50, hedge_ratio=2.0)
+    assert qty_a == 5
+    assert qty_b == 10
+
+
+def test_pairs_position_size_zero_price_returns_zero(risk_manager):
+    assert risk_manager.pairs_position_size(price_a=0, price_b=50, hedge_ratio=1.0) == (0, 0)
+
+
 def test_daily_loss_cap_halts_trading(risk_manager):
     assert risk_manager.approve_signal("2026-06-18") is True
     risk_manager.record_pnl("2026-06-18", -3500)  # exceeds 3% of 100000 = 3000

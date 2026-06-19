@@ -26,7 +26,7 @@ def _get_list(name: str, default: str = "") -> list[str]:
 
 
 VALID_MODES = ("backtest", "paper", "live")
-VALID_STRATEGIES = ("orb", "momentum_halfhour")
+VALID_STRATEGIES = ("orb", "momentum_halfhour", "pairs")
 
 
 @dataclass
@@ -108,6 +108,17 @@ class Settings:
     momentum_volume_lookback: int = field(
         default_factory=lambda: int(os.getenv("MOMENTUM_VOLUME_LOOKBACK", "20"))
     )
+
+    # Pairs trading. Pairs + hedge ratios come from screening/pair_finder.py's
+    # output (re-run periodically -- cointegration can break over time).
+    pairs_config_path: str = field(
+        default_factory=lambda: os.getenv("PAIRS_CONFIG_PATH", "config/pairs.json")
+    )
+    pairs_spread_lookback: int = field(
+        default_factory=lambda: int(os.getenv("PAIRS_SPREAD_LOOKBACK", "20"))
+    )
+    pairs_entry_z: float = field(default_factory=lambda: float(os.getenv("PAIRS_ENTRY_Z", "2.0")))
+    pairs_exit_z: float = field(default_factory=lambda: float(os.getenv("PAIRS_EXIT_Z", "0.5")))
 
     market_protection_pct: float = field(
         default_factory=lambda: float(os.getenv("MARKET_PROTECTION_PCT", "1.0"))

@@ -46,6 +46,18 @@ class RiskManager:
             return 0
         return max(0, int(risk_amount / per_share_risk))
 
+    def pairs_position_size(self, price_a: float, price_b: float, hedge_ratio: float) -> tuple[int, int]:
+        """Shares for both legs of a pairs trade, splitting the per-trade risk
+        amount evenly across the two legs and keeping the position beta-neutral
+        (leg B's quantity scaled by hedge_ratio relative to leg A's)."""
+        risk_amount = self.capital * (self.risk_pct_per_trade / 100)
+        if price_a <= 0 or price_b <= 0:
+            return 0, 0
+        notional_per_leg = risk_amount / 2
+        qty_a = int(notional_per_leg / price_a)
+        qty_b = int(qty_a * hedge_ratio)
+        return max(0, qty_a), max(0, qty_b)
+
     def approve_signal(self, trade_date: str) -> bool:
         """Returns False if trading should be blocked right now (loss cap or kill switch)."""
         if self._killed:
