@@ -26,6 +26,7 @@ def _get_list(name: str, default: str = "") -> list[str]:
 
 
 VALID_MODES = ("backtest", "paper", "live")
+VALID_STRATEGIES = ("orb", "momentum_halfhour")
 
 
 @dataclass
@@ -66,6 +67,8 @@ class Settings:
 
     backtest_days: int = field(default_factory=lambda: int(os.getenv("BACKTEST_DAYS", "180")))
 
+    # Which strategy to run: "orb" or "momentum_halfhour".
+    strategy: str = field(default_factory=lambda: os.getenv("STRATEGY", "orb"))
 
     orb_range_minutes: int = field(
         default_factory=lambda: int(os.getenv("ORB_RANGE_MINUTES", "15"))
@@ -95,6 +98,17 @@ class Settings:
     # Set to 0 to disable (winners only exit via EOD square-off).
     orb_target_r: float = field(default_factory=lambda: float(os.getenv("ORB_TARGET_R", "2.0")))
 
+    # First-half-hour -> last-half-hour momentum strategy.
+    momentum_window_minutes: int = field(
+        default_factory=lambda: int(os.getenv("MOMENTUM_WINDOW_MINUTES", "30"))
+    )
+    momentum_volume_multiplier: float = field(
+        default_factory=lambda: float(os.getenv("MOMENTUM_VOLUME_MULTIPLIER", "1.5"))
+    )
+    momentum_volume_lookback: int = field(
+        default_factory=lambda: int(os.getenv("MOMENTUM_VOLUME_LOOKBACK", "20"))
+    )
+
     market_protection_pct: float = field(
         default_factory=lambda: float(os.getenv("MARKET_PROTECTION_PCT", "1.0"))
     )
@@ -112,6 +126,8 @@ class Settings:
     def __post_init__(self) -> None:
         if self.mode not in VALID_MODES:
             raise ValueError(f"MODE must be one of {VALID_MODES}, got {self.mode!r}")
+        if self.strategy not in VALID_STRATEGIES:
+            raise ValueError(f"STRATEGY must be one of {VALID_STRATEGIES}, got {self.strategy!r}")
         if self.mode in ("live",) and not self.kite_api_key:
             raise ValueError("KITE_API_KEY is required for live mode")
 

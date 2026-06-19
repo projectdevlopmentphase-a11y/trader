@@ -15,6 +15,7 @@ from scheduler.scheduler import start_square_off_scheduler
 from storage.db import log_error, log_signal, reset_backtest_data, update_last_trade_pnl
 from storage.report import print_report
 from strategy.base import Action, Signal
+from strategy.momentum_halfhour import MomentumHalfHourStrategy
 from strategy.orb import ORBStrategy
 
 
@@ -106,6 +107,24 @@ class TraderApp:
             self.square_off_symbol(symbol, price, today, ts=now)
 
 
+def build_strategy():
+    if settings.strategy == "momentum_halfhour":
+        return MomentumHalfHourStrategy(
+            settings.momentum_window_minutes,
+            settings.momentum_volume_multiplier,
+            settings.momentum_volume_lookback,
+        )
+    return ORBStrategy(
+        settings.orb_range_minutes,
+        settings.orb_candle_interval,
+        settings.orb_volume_multiplier,
+        settings.orb_volume_lookback,
+        settings.orb_nr7_lookback,
+        settings.orb_entry_cutoff_time,
+        settings.orb_target_r,
+    )
+
+
 def build_executor(mode: str) -> OrderExecutor:
     if mode == "backtest":
         return BacktestExecutor()
@@ -124,22 +143,20 @@ def run_backtest() -> None:
     from auth.kite_auth import KiteAuth
     from data.historical import fetch_historical_candles
     from risk.risk_manager import RiskManager
-    from strategy.scanner import compute_narrow_range_days, group_candles_by_day, rank_candidates, scan_backtest_day
+    from strategy.scanner import (
+        compute_narrow_range_days,
+        compute_volume_ok_days,
+        group_candles_by_day,
+        rank_candidates,
+        scan_backtest_day,
+    )
 
     reset_backtest_data()
 
     auth = KiteAuth()
     kite = auth.authenticated_client()
 
-    strategy = ORBStrategy(
-        settings.orb_range_minutes,
-        settings.orb_candle_interval,
-        settings.orb_volume_multiplier,
-        settings.orb_volume_lookback,
-        settings.orb_nr7_lookback,
-        settings.orb_entry_cutoff_time,
-        settings.orb_target_r,
-    )
+    strategy = build_strategy()
     risk_manager = RiskManager(
         settings.capital,
         settings.risk_pct_per_trade,
@@ -182,6 +199,18 @@ def run_backtest() -> None:
         symbol: compute_narrow_range_days(by_day, settings.orb_nr7_lookback)
         for symbol, by_day in candles_by_symbol_day.items()
     }
+    # Only the momentum strategy reads an externally-stamped "_volume_ok";
+    # ORB tracks its own breakout-candle volume baseline internally.
+    volume_ok_days = (
+        {
+            symbol: compute_volume_ok_days(
+                by_day, settings.momentum_window_minutes, settings.momentum_volume_multiplier, settings.momentum_volume_lookback
+            )
+            for symbol, by_day in candles_by_symbol_day.items()
+        }
+        if settings.strategy == "momentum_halfhour"
+        else {}
+    )
 
     last_close_per_symbol: dict[str, float] = {}
 
@@ -209,8 +238,11 @@ def run_backtest() -> None:
             if not tradable_candles:
                 continue
             is_narrow_range_day = narrow_range_days[symbol].get(day, False)
+            is_volume_ok = volume_ok_days.get(symbol, {}).get(day, True)
             for candle in tradable_candles:
-                app.handle_candle(symbol, {**candle, "_narrow_range_day": is_narrow_range_day})
+                app.handle_candle(
+                    symbol, {**candle, "_narrow_range_day": is_narrow_range_day, "_volume_ok": is_volume_ok}
+                )
             app.square_off_symbol(symbol, tradable_candles[-1]["close"], day, ts=tradable_candles[-1]["date"])
 
         for symbol, by_day in candles_by_symbol_day.items():
@@ -228,15 +260,7 @@ def run_live_or_paper() -> None:
     from risk.risk_manager import RiskManager
     from strategy.scanner import rank_candidates, scan_live_universe
 
-    strategy = ORBStrategy(
-        settings.orb_range_minutes,
-        settings.orb_candle_interval,
-        settings.orb_volume_multiplier,
-        settings.orb_volume_lookback,
-        settings.orb_nr7_lookback,
-        settings.orb_entry_cutoff_time,
-        settings.orb_target_r,
-    )
+    strategy = build_strategy()
     risk_manager = RiskManager(
         settings.capital,
         settings.risk_pct_per_trade,
