@@ -13,7 +13,7 @@ from execution.live import LiveExecutor
 from execution.paper import PaperExecutor
 from scheduler.scheduler import start_square_off_scheduler
 from storage.db import log_error, log_signal, reset_backtest_data, update_last_trade_pnl
-from storage.report import print_report
+from storage.report import print_report, write_report
 from strategy.base import Action, Signal
 from strategy.momentum_halfhour import MomentumHalfHourStrategy
 from strategy.orb import ORBStrategy
@@ -331,7 +331,7 @@ def run_backtest() -> None:
             if day_candles:
                 last_close_per_symbol[symbol] = day_candles[-1]["close"]
 
-    print_report("backtest", app.open_positions)
+    write_report("backtest", app.open_positions)
 
 
 def run_backtest_pairs() -> None:
@@ -401,31 +401,30 @@ def run_backtest_pairs() -> None:
         current_day = day
         app.handle_candle(symbol, candle)
 
-    print_pairs_z_diagnostics(strategy)
-    print_report("backtest", app.open_positions)
+    diagnostics = build_pairs_z_diagnostics(strategy)
+    write_report("backtest", app.open_positions, extra=diagnostics)
 
 
-def print_pairs_z_diagnostics(strategy: PairsStrategy) -> None:
-    """Prints the distribution of every z-score the strategy computed, so
+def build_pairs_z_diagnostics(strategy: PairsStrategy) -> str:
+    """Builds the distribution of every z-score the strategy computed, so
     entry_z/exit_z/spread_lookback can be tuned from real numbers instead of
     guesswork when a backtest produces few or no trades."""
-    print("-" * 60)
-    print("PAIRS Z-SCORE DIAGNOSTICS")
-    print("-" * 60)
+    lines = ["-" * 60, "PAIRS Z-SCORE DIAGNOSTICS", "-" * 60]
     for pair_id, history in strategy.z_history.items():
         if not history:
-            print(f"{pair_id}: no z-scores computed (insufficient candle data)")
+            lines.append(f"{pair_id}: no z-scores computed (insufficient candle data)")
             continue
         sorted_history = sorted(history)
         n = len(sorted_history)
         p95 = sorted_history[int(n * 0.95)]
         p05 = sorted_history[int(n * 0.05)]
-        print(
+        lines.append(
             f"{pair_id}: n={n} min={sorted_history[0]:.2f} p05={p05:.2f} "
             f"mean={sum(history) / n:.2f} p95={p95:.2f} max={sorted_history[-1]:.2f} "
             f"max_abs={max(abs(sorted_history[0]), abs(sorted_history[-1])):.2f}"
         )
-    print("-" * 60)
+    lines.append("-" * 60)
+    return "\n".join(lines)
 
 
 def run_live_or_paper() -> None:

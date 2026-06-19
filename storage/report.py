@@ -87,3 +87,16 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
 
 def print_report(mode: str, open_positions: dict | None = None) -> None:
     print(build_report(mode, open_positions))
+
+
+def write_report(mode: str, open_positions: dict | None = None, path: str = "backtest_report.txt", extra: str = "") -> str:
+    """Writes the report to a file instead of stdout (the full trade-by-trade
+    listing can be too long to usefully read in a terminal), printing only a
+    short pointer to where it landed. Returns the path written."""
+    report = build_report(mode, open_positions)
+    if extra:
+        report = extra + "\n" + report
+    with open(path, "w") as f:
+        f.write(report)
+    print(f"Report written to {path}")
+    return path
