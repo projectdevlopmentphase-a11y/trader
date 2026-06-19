@@ -90,6 +90,10 @@ class Settings:
     orb_entry_cutoff_time: str = field(
         default_factory=lambda: os.getenv("ORB_ENTRY_CUTOFF_TIME", "13:00")
     )
+    # Profit target as a multiple of the entry's risk (entry-to-stop distance).
+    # E.g. 2.0 means exit once unrealized gain reaches 2x the risked amount.
+    # Set to 0 to disable (winners only exit via EOD square-off).
+    orb_target_r: float = field(default_factory=lambda: float(os.getenv("ORB_TARGET_R", "2.0")))
 
     market_protection_pct: float = field(
         default_factory=lambda: float(os.getenv("MARKET_PROTECTION_PCT", "1.0"))

@@ -59,6 +59,7 @@ strategy = ORBStrategy(
     settings.orb_volume_lookback,
     settings.orb_nr7_lookback,
     settings.orb_entry_cutoff_time,
+    settings.orb_target_r,
 )
 
 watchlist_days_by_month = Counter()

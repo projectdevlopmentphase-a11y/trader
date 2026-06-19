@@ -14,6 +14,11 @@ disabled by setting its threshold to 0/None):
   the narrowest of the last nr7_lookback trading days.
 - Time-of-day cutoff: no new entries after entry_cutoff_time (exits/EOD
   square-off are unaffected).
+
+Exits are an intrabar stop-loss (entry-to-opposite-range-boundary distance),
+an intrabar profit target (target_r times that same risk distance), or EOD
+square-off, whichever comes first -- without a target, winners could only
+ever exit at EOD's closing price regardless of how far they'd run.
 """
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ class _SymbolState:
         self.range_ready = False
         self.position: str | None = None  # "LONG" | "SHORT" | None
         self.stop_price: float | None = None
+        self.target_price: float | None = None
         self.took_long = False
         self.took_short = False
         self.day_high: float | None = None
@@ -65,12 +71,14 @@ class ORBStrategy(Strategy):
         volume_lookback: int = 20,
         nr7_lookback: int = 7,
         entry_cutoff_time: str | None = "13:00",
+        target_r: float = 2.0,
     ):
         self.range_candles = max(1, range_minutes // _interval_minutes(candle_interval))
         self.volume_multiplier = volume_multiplier
         self.volume_lookback = volume_lookback
         self.nr7_lookback = nr7_lookback
         self.entry_cutoff = _parse_time(entry_cutoff_time)
+        self.target_r = target_r
         self._state: dict[str, _SymbolState] = {}
 
     def _state_for(self, symbol: str) -> _SymbolState:
@@ -101,6 +109,7 @@ class ORBStrategy(Strategy):
             state.range_ready = False
             state.position = None
             state.stop_price = None
+            state.target_price = None
             state.took_long = False
             state.took_short = False
             state.day_high = None
@@ -143,23 +152,36 @@ class ORBStrategy(Strategy):
                 state.position = "LONG"
                 state.took_long = True
                 state.stop_price = state.range_low
+                risk = close - state.range_low
+                state.target_price = close + self.target_r * risk if self.target_r > 0 else None
                 return Signal(self.name, symbol, Action.BUY, close, reason="breakout above opening range high", stop_price=state.range_low, ts=candle_date)
             if entries_allowed and close < state.range_low and not state.took_short:
                 state.position = "SHORT"
                 state.took_short = True
                 state.stop_price = state.range_high
+                risk = state.range_high - close
+                state.target_price = close - self.target_r * risk if self.target_r > 0 else None
                 return Signal(self.name, symbol, Action.SELL, close, reason="breakdown below opening range low", stop_price=state.range_high, ts=candle_date)
             return None
 
-        # Intrabar stop: exit as soon as the candle's high/low touches the
-        # stop level, rather than waiting for a close beyond it -- a close-
-        # only check lets a position ride through the whole candle even
-        # after the stop has already been breached intraday.
-        if state.position == "LONG" and candle["low"] <= state.stop_price:
-            state.position = None
-            return Signal(self.name, symbol, Action.EXIT, state.stop_price, reason="stop-loss hit", ts=candle_date)
-        if state.position == "SHORT" and candle["high"] >= state.stop_price:
-            state.position = None
-            return Signal(self.name, symbol, Action.EXIT, state.stop_price, reason="stop-loss hit", ts=candle_date)
+        # Intrabar stop/target: exit as soon as the candle's high/low touches
+        # either level, rather than waiting for a close beyond it -- a close-
+        # only check lets a position ride through the whole candle even after
+        # a level has already been breached intraday. Stop takes priority if
+        # a single candle's range spans both (conservative assumption).
+        if state.position == "LONG":
+            if candle["low"] <= state.stop_price:
+                state.position = None
+                return Signal(self.name, symbol, Action.EXIT, state.stop_price, reason="stop-loss hit", ts=candle_date)
+            if state.target_price is not None and candle["high"] >= state.target_price:
+                state.position = None
+                return Signal(self.name, symbol, Action.EXIT, state.target_price, reason="profit target hit", ts=candle_date)
+        if state.position == "SHORT":
+            if candle["high"] >= state.stop_price:
+                state.position = None
+                return Signal(self.name, symbol, Action.EXIT, state.stop_price, reason="stop-loss hit", ts=candle_date)
+            if state.target_price is not None and candle["low"] <= state.target_price:
+                state.position = None
+                return Signal(self.name, symbol, Action.EXIT, state.target_price, reason="profit target hit", ts=candle_date)
 
         return None

@@ -138,6 +138,7 @@ def run_backtest() -> None:
         settings.orb_volume_lookback,
         settings.orb_nr7_lookback,
         settings.orb_entry_cutoff_time,
+        settings.orb_target_r,
     )
     risk_manager = RiskManager(
         settings.capital,
@@ -234,6 +235,7 @@ def run_live_or_paper() -> None:
         settings.orb_volume_lookback,
         settings.orb_nr7_lookback,
         settings.orb_entry_cutoff_time,
+        settings.orb_target_r,
     )
     risk_manager = RiskManager(
         settings.capital,
