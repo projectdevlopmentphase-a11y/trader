@@ -1,9 +1,27 @@
 """Historical candle fetch for backtesting via the Kite Connect REST API."""
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta
 
 from kiteconnect import KiteConnect
+
+# Kite's historical API is capped at 3 requests/second; pace every outgoing
+# request (chunks within one call, and successive calls across symbols)
+# below that, tracked globally so callers looping over symbols don't need to
+# pace themselves.
+_REQUEST_INTERVAL_SECONDS = 0.4
+_last_request_time: float | None = None
+
+
+def _throttle() -> None:
+    global _last_request_time
+    now = time.monotonic()
+    if _last_request_time is not None:
+        elapsed = now - _last_request_time
+        if elapsed < _REQUEST_INTERVAL_SECONDS:
+            time.sleep(_REQUEST_INTERVAL_SECONDS - elapsed)
+    _last_request_time = time.monotonic()
 
 # Kite's historical API caps the date range per request depending on the
 # candle interval; requesting a wider span raises
@@ -39,6 +57,7 @@ def fetch_historical_candles(
     seen_dates: set = set()
     chunk_start = from_date
     while chunk_start < to_date:
+        _throttle()
         chunk_end = min(chunk_start + timedelta(days=max_days), to_date)
         for candle in kite.historical_data(instrument_token, chunk_start, chunk_end, interval):
             if candle["date"] not in seen_dates:
