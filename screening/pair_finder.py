@@ -30,6 +30,15 @@ CANDIDATE_PAIRS: list[tuple[str, str]] = [
     ("WIPRO", "HCLTECH"),
     ("MARUTI", "M&M"),
     ("TATAMOTORS", "M&M"),
+    ("BAJAJ-AUTO", "HEROMOTOCO"),
+    ("SUNPHARMA", "DRREDDY"),
+    ("CIPLA", "DIVISLAB"),
+    ("ULTRACEMCO", "SHREECEM"),
+    ("ACC", "AMBUJACEM"),
+    ("HINDUNILVR", "NESTLEIND"),
+    ("BRITANNIA", "DABUR"),
+    ("DLF", "GODREJPROP"),
+    ("OBEROIRLTY", "PRESTIGE"),
 ]
 
 MIN_CORRELATION = 0.8
