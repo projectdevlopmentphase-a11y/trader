@@ -32,26 +32,19 @@ if __name__ == "__main__" and __package__ is None:
 
 from statsmodels.tsa.stattools import coint
 
-CANDIDATE_PAIRS: list[tuple[str, str]] = [
-    ("HDFCBANK", "ICICIBANK"),
-    ("AXISBANK", "KOTAKBANK"),
-    ("TCS", "INFY"),
-    ("WIPRO", "HCLTECH"),
-    ("MARUTI", "M&M"),
-    ("TATAMOTORS", "M&M"),
-    ("BAJAJ-AUTO", "HEROMOTOCO"),
-    ("SUNPHARMA", "DRREDDY"),
-    ("CIPLA", "DIVISLAB"),
-    ("ULTRACEMCO", "SHREECEM"),
-    ("ACC", "AMBUJACEM"),
-    ("HINDUNILVR", "NESTLEIND"),
-    ("BRITANNIA", "DABUR"),
-    ("DLF", "GODREJPROP"),
-    ("OBEROIRLTY", "PRESTIGE"),
-]
+CANDIDATE_PAIRS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config", "candidate_pairs.json"
+)
 
 MIN_CORRELATION = 0.8
 CONFIDENCE_LEVEL = 0.90
+
+
+def load_candidate_pairs(path: str = CANDIDATE_PAIRS_PATH) -> list[tuple[str, str]]:
+    """Reads the candidate symbol-pair list to screen (config/candidate_pairs.json)."""
+    with open(path) as f:
+        raw = json.load(f)
+    return [tuple(pair) for pair in raw]
 
 
 @dataclass
@@ -141,7 +134,8 @@ def run_screen(output_path: str, formation_days: int = 365) -> list[PairResult]:
     auth = KiteAuth()
     kite = auth.authenticated_client()
 
-    symbols = sorted({symbol for pair in CANDIDATE_PAIRS for symbol in pair})
+    candidate_pairs = load_candidate_pairs()
+    symbols = sorted({symbol for pair in candidate_pairs for symbol in pair})
     instruments = kite.instruments("NSE")
     symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments if i["tradingsymbol"] in symbols}
 
@@ -149,7 +143,7 @@ def run_screen(output_path: str, formation_days: int = 365) -> list[PairResult]:
     from_date = to_date - timedelta(days=formation_days)
     price_history = fetch_daily_closes(kite, symbol_to_token, from_date, to_date)
 
-    results = screen_pairs(CANDIDATE_PAIRS, price_history)
+    results = screen_pairs(candidate_pairs, price_history)
 
     with open(output_path, "w") as f:
         json.dump([asdict(r) for r in results], f, indent=2)
