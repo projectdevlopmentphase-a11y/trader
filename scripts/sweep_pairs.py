@@ -63,7 +63,10 @@ class SweepResult:
         return self.net_pnl / self.closed_trades if self.closed_trades else 0.0
 
 
-def run_one(entry_z: float, exit_z: float, spread_lookback: int, capital_pct: float) -> SweepResult:
+def run_one(
+    entry_z: float, exit_z: float, spread_lookback: int, capital_pct: float,
+    pairs_config_path: str | None = None,
+) -> SweepResult:
     result = SweepResult(entry_z, exit_z, spread_lookback, capital_pct)
 
     env = os.environ.copy()
@@ -73,6 +76,8 @@ def run_one(entry_z: float, exit_z: float, spread_lookback: int, capital_pct: fl
     env["PAIRS_EXIT_Z"] = str(exit_z)
     env["PAIRS_SPREAD_LOOKBACK"] = str(spread_lookback)
     env["PAIRS_CAPITAL_PCT"] = str(capital_pct)
+    if pairs_config_path is not None:
+        env["PAIRS_CONFIG_PATH"] = pairs_config_path
 
     proc = subprocess.run(
         [sys.executable, "main.py"],
