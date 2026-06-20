@@ -389,18 +389,20 @@ def run_backtest_pairs() -> None:
             timeline.append((candle["date"], symbol, candle))
     timeline.sort(key=lambda item: item[0])
 
+    last_close: dict[str, float] = {}
     current_day = None
     for ts, symbol, candle in timeline:
         day = ts.date().isoformat() if isinstance(ts, datetime) else str(ts)[:10]
         if current_day is not None and day != current_day:
             for pair_id in list(app.open_pair_positions):
                 symbol_a, _, _, _, symbol_b, _, _, _ = app.open_pair_positions[pair_id]
-                price_a = candles_by_symbol[symbol_a][-1]["close"] if candles_by_symbol.get(symbol_a) else None
-                price_b = candles_by_symbol[symbol_b][-1]["close"] if candles_by_symbol.get(symbol_b) else None
+                price_a = last_close.get(symbol_a)
+                price_b = last_close.get(symbol_b)
                 if price_a is not None and price_b is not None:
                     app.square_off_pair(pair_id, price_a, price_b, current_day, ts=ts)
         current_day = day
         app.handle_candle(symbol, candle)
+        last_close[symbol] = candle["close"]
 
     diagnostics = build_pairs_z_diagnostics(strategy)
     write_report("backtest", settings, app.open_positions, extra=diagnostics)
