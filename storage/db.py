@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS trades (
     status TEXT NOT NULL,
     cost REAL NOT NULL DEFAULT 0,
     pnl REAL,
-    net_pnl REAL
+    net_pnl REAL,
+    pair_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS errors (
@@ -64,7 +65,7 @@ def get_connection() -> sqlite3.Connection:
         _connection = sqlite3.connect(settings.db_path, check_same_thread=False)
         _connection.executescript(_SCHEMA)
         # Existing DBs created before cost/net_pnl tracking was added.
-        for column, ddl in (("cost", "REAL NOT NULL DEFAULT 0"), ("net_pnl", "REAL")):
+        for column, ddl in (("cost", "REAL NOT NULL DEFAULT 0"), ("net_pnl", "REAL"), ("pair_id", "TEXT")):
             try:
                 _connection.execute(f"ALTER TABLE trades ADD COLUMN {column} {ddl}")
             except sqlite3.OperationalError:
@@ -114,13 +115,14 @@ def log_trade(
     order_id: str | None = None,
     cost: float = 0.0,
     pnl: float | None = None,
+    pair_id: str | None = None,
     ts=None,
 ) -> None:
     with cursor() as cur:
         cur.execute(
             """INSERT INTO trades
-            (ts, mode, strategy, symbol, side, quantity, price, order_id, status, cost, pnl)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ts, mode, strategy, symbol, side, quantity, price, order_id, status, cost, pnl, pair_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 _format_ts(ts),
                 mode,
@@ -133,6 +135,7 @@ def log_trade(
                 status,
                 cost,
                 pnl,
+                pair_id,
             ),
         )
 

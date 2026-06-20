@@ -60,8 +60,8 @@ class TraderApp:
             exit_side_a = Action.SELL if side_a == "BUY" else Action.BUY
             exit_side_b = Action.SELL if side_b == "BUY" else Action.BUY
             try:
-                fill_a = self.executor.execute(Signal(signal.strategy, symbol_a, exit_side_a, signal.price, ts=signal.ts), qty_a)
-                fill_b = self.executor.execute(Signal(signal.strategy, symbol_b, exit_side_b, signal.leg2_price, ts=signal.ts), qty_b)
+                fill_a = self.executor.execute(Signal(signal.strategy, symbol_a, exit_side_a, signal.price, pair_id=signal.pair_id, ts=signal.ts), qty_a)
+                fill_b = self.executor.execute(Signal(signal.strategy, symbol_b, exit_side_b, signal.leg2_price, pair_id=signal.pair_id, ts=signal.ts), qty_b)
             except Exception as exc:
                 self.risk_manager.record_error("executor", str(exc))
                 return
@@ -83,7 +83,7 @@ class TraderApp:
             return
         try:
             fill_a = self.executor.execute(signal, qty_a)
-            leg2_signal = Signal(signal.strategy, signal.leg2_symbol, signal.leg2_action, signal.leg2_price, ts=signal.ts)
+            leg2_signal = Signal(signal.strategy, signal.leg2_symbol, signal.leg2_action, signal.leg2_price, pair_id=signal.pair_id, ts=signal.ts)
             fill_b = self.executor.execute(leg2_signal, qty_b)
         except Exception as exc:
             self.risk_manager.record_error("executor", str(exc))

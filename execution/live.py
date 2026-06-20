@@ -53,6 +53,6 @@ class LiveExecutor(OrderExecutor):
         )
         log_trade(
             self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, status,
-            order_id=order_id, cost=cost, ts=signal.ts,
+            order_id=order_id, cost=cost, pair_id=signal.pair_id, ts=signal.ts,
         )
         return fill

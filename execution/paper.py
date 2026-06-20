@@ -28,5 +28,8 @@ class PaperExecutor(OrderExecutor):
             status="FILLED",
             cost=cost,
         )
-        log_trade(self.mode, signal.strategy, signal.symbol, side, quantity, fill_price, "FILLED", cost=cost, ts=signal.ts)
+        log_trade(
+            self.mode, signal.strategy, signal.symbol, side, quantity, fill_price, "FILLED",
+            cost=cost, pair_id=signal.pair_id, ts=signal.ts,
+        )
         return fill

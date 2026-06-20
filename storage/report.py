@@ -92,6 +92,17 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
         for symbol, count, pnl, net_pnl in by_symbol:
             lines.append(f"  {symbol:<12} trades={count:<4} gross={pnl:.2f}  net={net_pnl:.2f}")
 
+    by_pair = _fetch_all(
+        """SELECT pair_id, COUNT(*), COALESCE(SUM(pnl), 0), COALESCE(SUM(COALESCE(net_pnl, pnl)), 0)
+           FROM trades WHERE mode = ? AND pair_id IS NOT NULL AND pnl IS NOT NULL GROUP BY pair_id ORDER BY pair_id""",
+        (mode,),
+    )
+    if by_pair:
+        lines.append("")
+        lines.append("Per-pair (closed legs, both sides combined, gross/net P&L):")
+        for pair_id, count, pnl, net_pnl in by_pair:
+            lines.append(f"  {pair_id:<24} legs={count:<4} gross={pnl:.2f}  net={net_pnl:.2f}")
+
     daily = _fetch_all("SELECT trade_date, realized_pnl, trade_count, halted FROM daily_pnl ORDER BY trade_date")
     lines.append("")
     lines.append(f"Trading days recorded: {len(daily)}")
