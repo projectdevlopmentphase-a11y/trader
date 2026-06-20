@@ -6,7 +6,44 @@ without having to query the SQLite file by hand.
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime
+
 from storage.db import cursor
+
+# Settings fields relevant to each strategy, dumped into the report header so
+# a given run's output can be traced back to the variables that produced it.
+_STRATEGY_FIELDS = {
+    "orb": (
+        "orb_range_minutes", "orb_candle_interval", "orb_volume_multiplier",
+        "orb_volume_lookback", "orb_nr7_lookback", "orb_entry_cutoff_time", "orb_target_r",
+    ),
+    "momentum_halfhour": (
+        "momentum_window_minutes", "momentum_volume_multiplier", "momentum_volume_lookback",
+    ),
+    "pairs": (
+        "pairs_config_path", "pairs_spread_lookback", "pairs_entry_z",
+        "pairs_exit_z", "pairs_capital_pct",
+    ),
+}
+
+
+def build_run_header(settings) -> str:
+    """Dumps the run's mode/strategy/capital and whichever strategy-specific
+    variables produced it, so a saved report is self-describing and several
+    runs' reports can later be compared without cross-referencing .env history."""
+    lines = ["=" * 60, "RUN METADATA", "=" * 60]
+    lines.append(f"Generated: {datetime.now().isoformat(timespec='seconds')}")
+    lines.append(f"mode: {settings.mode}")
+    lines.append(f"strategy: {settings.strategy}")
+    lines.append(f"capital: {settings.capital}")
+    lines.append(f"risk_pct_per_trade: {settings.risk_pct_per_trade}")
+    lines.append(f"daily_loss_cap_pct: {settings.daily_loss_cap_pct}")
+    lines.append(f"max_consecutive_errors: {settings.max_consecutive_errors}")
+    for name in _STRATEGY_FIELDS.get(settings.strategy, ()):
+        lines.append(f"{name}: {getattr(settings, name)}")
+    lines.append("=" * 60)
+    return "\n".join(lines)
 
 
 def _fetch_all(query: str, params: tuple = ()) -> list[tuple]:
@@ -89,11 +126,26 @@ def print_report(mode: str, open_positions: dict | None = None) -> None:
     print(build_report(mode, open_positions))
 
 
-def write_report(mode: str, open_positions: dict | None = None, path: str = "backtest_report.txt", extra: str = "") -> str:
-    """Writes the report to a file instead of stdout (the full trade-by-trade
-    listing can be too long to usefully read in a terminal), printing only a
-    short pointer to where it landed. Returns the path written."""
-    report = build_report(mode, open_positions)
+def write_report(
+    mode: str,
+    settings,
+    open_positions: dict | None = None,
+    extra: str = "",
+    base_dir: str = "reports",
+) -> str:
+    """Writes the report to a timestamped subfolder instead of stdout (the
+    full trade-by-trade listing can be too long to usefully read in a
+    terminal), printing only a short pointer to where it landed. Each run
+    gets its own folder (named by timestamp, mode, and strategy) so multiple
+    runs' reports can be kept side by side and later collated. Returns the
+    path written."""
+    run_dir = os.path.join(
+        base_dir, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mode}_{settings.strategy}"
+    )
+    os.makedirs(run_dir, exist_ok=True)
+    path = os.path.join(run_dir, "report.txt")
+
+    report = build_run_header(settings) + "\n" + build_report(mode, open_positions)
     if extra:
         report = extra + "\n" + report
     with open(path, "w") as f:

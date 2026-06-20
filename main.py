@@ -332,7 +332,7 @@ def run_backtest() -> None:
             if day_candles:
                 last_close_per_symbol[symbol] = day_candles[-1]["close"]
 
-    write_report("backtest", app.open_positions)
+    write_report("backtest", settings, app.open_positions)
 
 
 def run_backtest_pairs() -> None:
@@ -403,7 +403,7 @@ def run_backtest_pairs() -> None:
         app.handle_candle(symbol, candle)
 
     diagnostics = build_pairs_z_diagnostics(strategy)
-    write_report("backtest", app.open_positions, extra=diagnostics)
+    write_report("backtest", settings, app.open_positions, extra=diagnostics)
 
 
 def build_pairs_z_diagnostics(strategy: PairsStrategy) -> str:
