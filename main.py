@@ -29,9 +29,10 @@ class TraderApp:
         # square-off time. Falls back to entry_price (zero recorded P&L)
         # only if no fetcher is wired up, e.g. in tests.
         self.price_fetcher = price_fetcher
-        # symbol -> (action, quantity, entry_price)
-        self.open_positions: dict[str, tuple[str, int, float]] = {}
-        # pair_id -> (symbol_a, side_a, qty_a, entry_price_a, symbol_b, side_b, qty_b, entry_price_b)
+        # symbol -> (action, quantity, entry_price, entry_cost)
+        self.open_positions: dict[str, tuple[str, int, float, float]] = {}
+        # pair_id -> (symbol_a, side_a, qty_a, entry_price_a, entry_cost_a,
+        #              symbol_b, side_b, qty_b, entry_price_b, entry_cost_b)
         self.open_pair_positions: dict[str, tuple] = {}
 
     def handle_candle(self, symbol: str, candle: dict) -> None:
@@ -55,7 +56,7 @@ class TraderApp:
             position = self.open_pair_positions.pop(signal.pair_id, None)
             if position is None:
                 return
-            symbol_a, side_a, qty_a, entry_a, symbol_b, side_b, qty_b, entry_b = position
+            symbol_a, side_a, qty_a, entry_a, entry_cost_a, symbol_b, side_b, qty_b, entry_b, entry_cost_b = position
             exit_side_a = Action.SELL if side_a == "BUY" else Action.BUY
             exit_side_b = Action.SELL if side_b == "BUY" else Action.BUY
             try:
@@ -67,10 +68,12 @@ class TraderApp:
             self.risk_manager.record_success()
             pnl_a = (fill_a.price - entry_a) * qty_a if side_a == "BUY" else (entry_a - fill_a.price) * qty_a
             pnl_b = (fill_b.price - entry_b) * qty_b if side_b == "BUY" else (entry_b - fill_b.price) * qty_b
-            pnl = pnl_a + pnl_b
-            self.risk_manager.record_pnl(trade_date, pnl)
-            update_last_trade_pnl(symbol_a, pnl_a)
-            update_last_trade_pnl(symbol_b, pnl_b)
+            net_pnl_a = pnl_a - entry_cost_a - fill_a.cost
+            net_pnl_b = pnl_b - entry_cost_b - fill_b.cost
+            net_pnl = net_pnl_a + net_pnl_b
+            self.risk_manager.record_pnl(trade_date, net_pnl)
+            update_last_trade_pnl(symbol_a, pnl_a, net_pnl_a)
+            update_last_trade_pnl(symbol_b, pnl_b, net_pnl_b)
             return
 
         qty_a, qty_b = self.risk_manager.pairs_position_size(signal.price, signal.leg2_price, signal.hedge_ratio)
@@ -88,8 +91,8 @@ class TraderApp:
         self.risk_manager.record_success()
         if fill_a.status in ("FILLED", "PLACED") and fill_b.status in ("FILLED", "PLACED"):
             self.open_pair_positions[signal.pair_id] = (
-                signal.symbol, fill_a.side, fill_a.quantity, fill_a.price,
-                signal.leg2_symbol, fill_b.side, fill_b.quantity, fill_b.price,
+                signal.symbol, fill_a.side, fill_a.quantity, fill_a.price, fill_a.cost,
+                signal.leg2_symbol, fill_b.side, fill_b.quantity, fill_b.price, fill_b.cost,
             )
 
     def _handle_signal(self, signal: Signal, trade_date: str) -> None:
@@ -118,13 +121,13 @@ class TraderApp:
 
         self.risk_manager.record_success()
         if fill.status in ("FILLED", "PLACED"):
-            self.open_positions[signal.symbol] = (fill.side, fill.quantity, fill.price)
+            self.open_positions[signal.symbol] = (fill.side, fill.quantity, fill.price, fill.cost)
 
     def _exit_position(self, signal: Signal, trade_date: str) -> None:
         position = self.open_positions.pop(signal.symbol, None)
         if position is None:
             return
-        side, quantity, entry_price = position
+        side, quantity, entry_price, entry_cost = position
         exit_side = Action.SELL if side == "BUY" else Action.BUY
         exit_signal = Signal(signal.strategy, signal.symbol, exit_side, signal.price, reason=signal.reason, ts=signal.ts)
 
@@ -136,8 +139,9 @@ class TraderApp:
 
         self.risk_manager.record_success()
         pnl = (fill.price - entry_price) * quantity if side == "BUY" else (entry_price - fill.price) * quantity
-        self.risk_manager.record_pnl(trade_date, pnl)
-        update_last_trade_pnl(signal.symbol, pnl)
+        net_pnl = pnl - entry_cost - fill.cost
+        self.risk_manager.record_pnl(trade_date, net_pnl)
+        update_last_trade_pnl(signal.symbol, pnl, net_pnl)
 
     def square_off_symbol(self, symbol: str, price: float, trade_date: str, ts=None) -> None:
         if symbol not in self.open_positions:
@@ -147,7 +151,7 @@ class TraderApp:
     def square_off_pair(self, pair_id: str, price_a: float, price_b: float, trade_date: str, ts=None) -> None:
         if pair_id not in self.open_pair_positions:
             return
-        symbol_a, _, _, _, symbol_b, _, _, _ = self.open_pair_positions[pair_id]
+        symbol_a, _, _, _, _, symbol_b, _, _, _, _ = self.open_pair_positions[pair_id]
         self._handle_pair_signal(
             Signal(
                 self.strategy.name, symbol_a, Action.EXIT, price_a, reason="EOD square-off", ts=ts,
@@ -159,7 +163,7 @@ class TraderApp:
     def square_off_all(self) -> None:
         now = datetime.now()
         today = now.date().isoformat()
-        for symbol, (side, quantity, entry_price) in list(self.open_positions.items()):
+        for symbol, (side, quantity, entry_price, entry_cost) in list(self.open_positions.items()):
             price = entry_price
             if self.price_fetcher is not None:
                 fetched = self.price_fetcher(symbol)
@@ -171,7 +175,7 @@ class TraderApp:
                     )
             self.square_off_symbol(symbol, price, today, ts=now)
 
-        for pair_id, (symbol_a, _, _, entry_a, symbol_b, _, _, entry_b) in list(self.open_pair_positions.items()):
+        for pair_id, (symbol_a, _, _, entry_a, _, symbol_b, _, _, entry_b, _) in list(self.open_pair_positions.items()):
             price_a, price_b = entry_a, entry_b
             if self.price_fetcher is not None:
                 fetched_a = self.price_fetcher(symbol_a)
@@ -395,7 +399,7 @@ def run_backtest_pairs() -> None:
         day = ts.date().isoformat() if isinstance(ts, datetime) else str(ts)[:10]
         if current_day is not None and day != current_day:
             for pair_id in list(app.open_pair_positions):
-                symbol_a, _, _, _, symbol_b, _, _, _ = app.open_pair_positions[pair_id]
+                symbol_a, _, _, _, _, symbol_b, _, _, _, _ = app.open_pair_positions[pair_id]
                 price_a = last_close.get(symbol_a)
                 price_b = last_close.get(symbol_b)
                 if price_a is not None and price_b is not None:

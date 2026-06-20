@@ -40,6 +40,7 @@ def build_run_header(settings) -> str:
     lines.append(f"risk_pct_per_trade: {settings.risk_pct_per_trade}")
     lines.append(f"daily_loss_cap_pct: {settings.daily_loss_cap_pct}")
     lines.append(f"max_consecutive_errors: {settings.max_consecutive_errors}")
+    lines.append(f"slippage_bps: {settings.slippage_bps}")
     for name in _STRATEGY_FIELDS.get(settings.strategy, ()):
         lines.append(f"{name}: {getattr(settings, name)}")
     lines.append("=" * 60)
@@ -59,34 +60,37 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
     lines.append("=" * 60)
 
     trades = _fetch_all(
-        "SELECT ts, symbol, side, quantity, price, pnl, status FROM trades WHERE mode = ? ORDER BY id",
+        "SELECT ts, symbol, side, quantity, price, pnl, status, cost, net_pnl FROM trades WHERE mode = ? ORDER BY id",
         (mode,),
     )
+    total_cost = sum(t[7] or 0.0 for t in trades)
     closed_trades = [t for t in trades if t[5] is not None]
     total_pnl = sum(t[5] for t in closed_trades)
-    wins = [t for t in closed_trades if t[5] > 0]
-    losses = [t for t in closed_trades if t[5] < 0]
+    total_net_pnl = sum((t[8] if t[8] is not None else t[5]) for t in closed_trades)
+    wins = [t for t in closed_trades if (t[8] if t[8] is not None else t[5]) > 0]
+    losses = [t for t in closed_trades if (t[8] if t[8] is not None else t[5]) < 0]
     win_rate = (len(wins) / len(closed_trades) * 100) if closed_trades else 0.0
 
     lines.append(f"Total trade legs (entries + exits): {len(trades)}")
     lines.append(f"Closed round trips: {len(closed_trades)}")
-    lines.append(f"Wins: {len(wins)}  Losses: {len(losses)}  Win rate: {win_rate:.1f}%")
-    lines.append(f"Total realized P&L: {total_pnl:.2f}")
+    lines.append(f"Wins: {len(wins)}  Losses: {len(losses)}  Win rate: {win_rate:.1f}% (net basis)")
+    lines.append(f"Total transaction costs (brokerage/STT/exchange/GST/stamp duty): {total_cost:.2f}")
+    lines.append(f"Gross P&L: {total_pnl:.2f}  |  Net P&L: {total_net_pnl:.2f}")
     if closed_trades:
-        avg_win = sum(t[5] for t in wins) / len(wins) if wins else 0.0
-        avg_loss = sum(t[5] for t in losses) / len(losses) if losses else 0.0
-        lines.append(f"Avg win: {avg_win:.2f}  Avg loss: {avg_loss:.2f}")
+        avg_win = sum((t[8] if t[8] is not None else t[5]) for t in wins) / len(wins) if wins else 0.0
+        avg_loss = sum((t[8] if t[8] is not None else t[5]) for t in losses) / len(losses) if losses else 0.0
+        lines.append(f"Avg win (net): {avg_win:.2f}  Avg loss (net): {avg_loss:.2f}")
 
     by_symbol = _fetch_all(
-        """SELECT symbol, COUNT(*), COALESCE(SUM(pnl), 0)
+        """SELECT symbol, COUNT(*), COALESCE(SUM(pnl), 0), COALESCE(SUM(COALESCE(net_pnl, pnl)), 0)
            FROM trades WHERE mode = ? AND pnl IS NOT NULL GROUP BY symbol ORDER BY symbol""",
         (mode,),
     )
     if by_symbol:
         lines.append("")
-        lines.append("Per-symbol (closed trades, total P&L):")
-        for symbol, count, pnl in by_symbol:
-            lines.append(f"  {symbol:<12} trades={count:<4} pnl={pnl:.2f}")
+        lines.append("Per-symbol (closed trades, gross/net P&L):")
+        for symbol, count, pnl, net_pnl in by_symbol:
+            lines.append(f"  {symbol:<12} trades={count:<4} gross={pnl:.2f}  net={net_pnl:.2f}")
 
     daily = _fetch_all("SELECT trade_date, realized_pnl, trade_count, halted FROM daily_pnl ORDER BY trade_date")
     lines.append("")
@@ -113,10 +117,15 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
     if trades:
         lines.append("")
         lines.append("All trades:")
-        lines.append(f"  {'ts':<28}{'symbol':<12}{'side':<6}{'qty':>6}  {'price':>10}  {'pnl':>10}  status")
-        for ts, symbol, side, quantity, price, pnl, status in trades:
+        lines.append(
+            f"  {'ts':<28}{'symbol':<12}{'side':<6}{'qty':>6}  {'price':>10}  {'cost':>8}  {'gross':>10}  {'net':>10}  status"
+        )
+        for ts, symbol, side, quantity, price, pnl, status, cost, net_pnl in trades:
             pnl_str = f"{pnl:.2f}" if pnl is not None else "-"
-            lines.append(f"  {ts:<28}{symbol:<12}{side:<6}{quantity:>6}  {price:>10.2f}  {pnl_str:>10}  {status}")
+            net_str = f"{net_pnl:.2f}" if net_pnl is not None else "-"
+            lines.append(
+                f"  {ts:<28}{symbol:<12}{side:<6}{quantity:>6}  {price:>10.2f}  {cost:>8.2f}  {pnl_str:>10}  {net_str:>10}  {status}"
+            )
         lines.append("=" * 60)
 
     return "\n".join(lines)

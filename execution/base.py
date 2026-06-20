@@ -20,6 +20,7 @@ class Fill:
     price: float
     order_id: str | None
     status: str
+    cost: float = 0.0
 
 
 class OrderExecutor(ABC):

@@ -126,6 +126,11 @@ class Settings:
         default_factory=lambda: float(os.getenv("PAIRS_CAPITAL_PCT", "10.0"))
     )
 
+    # Flat per-fill slippage assumption (basis points) applied unfavorably in
+    # backtest/paper simulated fills: buys fill higher, sells fill lower.
+    # Tune this once real paper-trading fills show a more realistic number.
+    slippage_bps: float = field(default_factory=lambda: float(os.getenv("SLIPPAGE_BPS", "5")))
+
     market_protection_pct: float = field(
         default_factory=lambda: float(os.getenv("MARKET_PROTECTION_PCT", "1.0"))
     )

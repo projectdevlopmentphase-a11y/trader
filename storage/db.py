@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS trades (
     price REAL NOT NULL,
     order_id TEXT,
     status TEXT NOT NULL,
-    pnl REAL
+    cost REAL NOT NULL DEFAULT 0,
+    pnl REAL,
+    net_pnl REAL
 );
 
 CREATE TABLE IF NOT EXISTS errors (
@@ -61,6 +63,12 @@ def get_connection() -> sqlite3.Connection:
         Path(settings.db_path).parent.mkdir(parents=True, exist_ok=True)
         _connection = sqlite3.connect(settings.db_path, check_same_thread=False)
         _connection.executescript(_SCHEMA)
+        # Existing DBs created before cost/net_pnl tracking was added.
+        for column, ddl in (("cost", "REAL NOT NULL DEFAULT 0"), ("net_pnl", "REAL")):
+            try:
+                _connection.execute(f"ALTER TABLE trades ADD COLUMN {column} {ddl}")
+            except sqlite3.OperationalError:
+                pass
         _connection.commit()
     return _connection
 
@@ -104,14 +112,15 @@ def log_trade(
     price: float,
     status: str,
     order_id: str | None = None,
+    cost: float = 0.0,
     pnl: float | None = None,
     ts=None,
 ) -> None:
     with cursor() as cur:
         cur.execute(
             """INSERT INTO trades
-            (ts, mode, strategy, symbol, side, quantity, price, order_id, status, pnl)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ts, mode, strategy, symbol, side, quantity, price, order_id, status, cost, pnl)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 _format_ts(ts),
                 mode,
@@ -122,20 +131,22 @@ def log_trade(
                 price,
                 order_id,
                 status,
+                cost,
                 pnl,
             ),
         )
 
 
-def update_last_trade_pnl(symbol: str, pnl: float) -> None:
-    """Stamps the realized P&L onto the most recently logged trade row for
-    this symbol (the exit fill just recorded by log_trade)."""
+def update_last_trade_pnl(symbol: str, pnl: float, net_pnl: float | None = None) -> None:
+    """Stamps the realized gross (and net, after transaction costs) P&L onto
+    the most recently logged trade row for this symbol (the exit fill just
+    recorded by log_trade)."""
     with cursor() as cur:
         cur.execute(
-            """UPDATE trades SET pnl = ? WHERE id = (
+            """UPDATE trades SET pnl = ?, net_pnl = ? WHERE id = (
                 SELECT id FROM trades WHERE symbol = ? ORDER BY id DESC LIMIT 1
             )""",
-            (pnl, symbol),
+            (pnl, net_pnl if net_pnl is not None else pnl, symbol),
         )
 
 

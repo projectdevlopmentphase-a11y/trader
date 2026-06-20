@@ -8,6 +8,7 @@ from kiteconnect import KiteConnect
 
 from config.settings import settings
 from execution.base import Fill, OrderExecutor
+from execution.costs import calculate_transaction_cost
 from storage.db import log_error, log_trade
 from strategy.base import Action, Signal
 
@@ -40,6 +41,7 @@ class LiveExecutor(OrderExecutor):
             order_id = None
             status = "FAILED"
 
+        cost = calculate_transaction_cost(side, signal.price, quantity)
         fill = Fill(
             symbol=signal.symbol,
             side=side,
@@ -47,6 +49,10 @@ class LiveExecutor(OrderExecutor):
             price=signal.price,
             order_id=order_id,
             status=status,
+            cost=cost,
         )
-        log_trade(self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, status, order_id=order_id, ts=signal.ts)
+        log_trade(
+            self.mode, signal.strategy, signal.symbol, side, quantity, signal.price, status,
+            order_id=order_id, cost=cost, ts=signal.ts,
+        )
         return fill
