@@ -37,9 +37,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # backtest subprocess fetches candles on startup, so running combinations
 # back-to-back without a gap gets throttled mid-sweep ("Too many requests"),
 # producing ERROR rows instead of real results.
-INTER_RUN_DELAY_SECONDS = 2.0
-RATE_LIMIT_RETRIES = 3
-RATE_LIMIT_BACKOFF_SECONDS = 10.0
+INTER_RUN_DELAY_SECONDS = 5.0
+# Zerodha's limiter appears to enforce a cooldown that outlasts a few
+# seconds once tripped by a burst (e.g. an earlier large sweep), not just a
+# strict 3 req/sec instantaneous cap -- so retries escalate well past 10s.
+RATE_LIMIT_RETRIES = 5
+RATE_LIMIT_BACKOFF_SECONDS = 20.0
 
 _REPORT_WRITTEN_RE = re.compile(r"Report written to (.+)$", re.MULTILINE)
 _FIELD_PATTERNS = {
@@ -100,8 +103,9 @@ def run_one(
         if proc.returncode == 0 or "Too many requests" not in proc.stderr:
             break
         if attempt < RATE_LIMIT_RETRIES:
-            print(f"      Kite rate limit hit, retrying in {RATE_LIMIT_BACKOFF_SECONDS:.0f}s...")
-            time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+            wait = RATE_LIMIT_BACKOFF_SECONDS * (2 ** attempt)
+            print(f"      Kite rate limit hit, retrying in {wait:.0f}s...")
+            time.sleep(wait)
 
     if proc.returncode != 0:
         result.error = f"exit code {proc.returncode}: {proc.stderr.strip()[-500:]}"
