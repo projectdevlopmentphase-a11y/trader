@@ -25,6 +25,15 @@ _STRATEGY_FIELDS = {
         "pairs_config_path", "pairs_spread_lookback", "pairs_entry_z",
         "pairs_exit_z", "pairs_capital_pct",
     ),
+    "momentum_swing": (
+        "swing_universe", "swing_capital_pct", "momentum_swing_lookback_months",
+        "momentum_swing_skip_months", "momentum_swing_top_n",
+        "momentum_swing_rebalance_day_of_month", "momentum_swing_stop_pct",
+    ),
+    "breakout_swing": (
+        "swing_universe", "swing_capital_pct", "breakout_swing_lookback_days",
+        "breakout_swing_trailing_stop_days", "swing_min_stop_distance_pct",
+    ),
 }
 
 

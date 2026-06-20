@@ -29,3 +29,21 @@ def start_square_off_scheduler(square_off_fn: Callable[[], None]) -> BackgroundS
     )
     scheduler.start()
     return scheduler
+
+
+def start_swing_scheduler(swing_run_fn: Callable[[], None]) -> BackgroundScheduler:
+    """Swing positions are CNC delivery and held overnight intentionally, so
+    this runs once a day (not the continuous EOD square-off loop) to check
+    for new breakout/momentum-rebalance signals on the day's closing candle."""
+    hour, minute = (int(part) for part in settings.swing_daily_run_time.split(":"))
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        swing_run_fn,
+        "cron",
+        day_of_week="mon-fri",
+        hour=hour,
+        minute=minute,
+        id="swing_daily_run",
+    )
+    scheduler.start()
+    return scheduler

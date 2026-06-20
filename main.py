@@ -11,13 +11,18 @@ from execution.backtest import BacktestExecutor
 from execution.base import OrderExecutor
 from execution.live import LiveExecutor
 from execution.paper import PaperExecutor
-from scheduler.scheduler import start_square_off_scheduler
+from execution.swing import SwingExecutor
+from scheduler.scheduler import start_square_off_scheduler, start_swing_scheduler
 from storage.db import log_error, log_signal, reset_backtest_data, update_last_trade_pnl
 from storage.report import print_report, write_report
 from strategy.base import Action, Signal
+from strategy.breakout_swing import BreakoutSwingStrategy
 from strategy.momentum_halfhour import MomentumHalfHourStrategy
+from strategy.momentum_swing import MomentumSwingStrategy
 from strategy.orb import ORBStrategy
 from strategy.pairs import PairsStrategy, load_pairs_config
+
+SWING_STRATEGIES = ("momentum_swing", "breakout_swing")
 
 
 class TraderApp:
@@ -109,7 +114,12 @@ class TraderApp:
             stop_loss_price = signal.stop_price
         else:
             stop_loss_price = signal.price * (0.99 if signal.action == Action.BUY else 1.01)
-        quantity = self.risk_manager.position_size(signal.price, stop_loss_price)
+        if signal.strategy in SWING_STRATEGIES:
+            quantity = self.risk_manager.swing_position_size(
+                signal.price, stop_loss_price, settings.swing_min_stop_distance_pct
+            )
+        else:
+            quantity = self.risk_manager.position_size(signal.price, stop_loss_price)
         if quantity <= 0:
             return
 
@@ -142,6 +152,33 @@ class TraderApp:
         net_pnl = pnl - entry_cost - fill.cost
         self.risk_manager.record_pnl(trade_date, net_pnl)
         update_last_trade_pnl(signal.symbol, pnl, net_pnl)
+
+    def handle_swing_signal(self, signal: Signal, trade_date: str, quantity: int) -> None:
+        """Entry point for swing signals sized externally (equal-weight via
+        RiskManager.equal_weight_position_size for momentum_swing rebalances,
+        or risk-based via swing_position_size for breakout_swing), bypassing
+        _handle_signal's intraday-style stop-distance sizing."""
+        log_signal(signal.strategy, signal.symbol, signal.action.value, signal.price, signal.reason, ts=signal.ts)
+
+        if not self.risk_manager.approve_signal(trade_date):
+            return
+
+        if signal.action == Action.EXIT:
+            self._exit_position(signal, trade_date)
+            return
+
+        if quantity <= 0:
+            return
+
+        try:
+            fill = self.executor.execute(signal, quantity)
+        except Exception as exc:
+            self.risk_manager.record_error("executor", str(exc))
+            return
+
+        self.risk_manager.record_success()
+        if fill.status in ("FILLED", "PLACED"):
+            self.open_positions[signal.symbol] = (fill.side, fill.quantity, fill.price, fill.cost)
 
     def square_off_symbol(self, symbol: str, price: float, trade_date: str, ts=None) -> None:
         if symbol not in self.open_positions:
@@ -199,6 +236,19 @@ def build_strategy():
     if settings.strategy == "pairs":
         pairs = load_pairs_config(settings.pairs_config_path)
         return PairsStrategy(pairs, settings.pairs_spread_lookback, settings.pairs_entry_z, settings.pairs_exit_z)
+    if settings.strategy == "momentum_swing":
+        return MomentumSwingStrategy(
+            settings.momentum_swing_lookback_months,
+            settings.momentum_swing_skip_months,
+            settings.momentum_swing_top_n,
+            settings.momentum_swing_rebalance_day_of_month,
+            settings.momentum_swing_stop_pct,
+        )
+    if settings.strategy == "breakout_swing":
+        return BreakoutSwingStrategy(
+            settings.breakout_swing_lookback_days,
+            settings.breakout_swing_trailing_stop_days,
+        )
     return ORBStrategy(
         settings.orb_range_minutes,
         settings.orb_candle_interval,
@@ -211,15 +261,18 @@ def build_strategy():
 
 
 def build_executor(mode: str) -> OrderExecutor:
+    product_type = "CNC" if settings.strategy in SWING_STRATEGIES else "MIS"
     if mode == "backtest":
-        return BacktestExecutor()
+        return BacktestExecutor(product_type=product_type)
     if mode == "paper":
-        return PaperExecutor()
+        return PaperExecutor(product_type=product_type)
     if mode == "live":
         from auth.kite_auth import KiteAuth
 
         auth = KiteAuth()
         kite = auth.authenticated_client()
+        if settings.strategy in SWING_STRATEGIES:
+            return SwingExecutor(kite)
         return LiveExecutor(kite)
     raise ValueError(f"Unknown mode: {mode}")
 
@@ -434,6 +487,159 @@ def build_pairs_z_diagnostics(strategy: PairsStrategy) -> str:
     return "\n".join(lines)
 
 
+def run_backtest_swing() -> None:
+    """Swing strategies trade a fixed universe (settings.swing_universe) on
+    daily candles, not the daily scanner's intraday watchlist, and
+    momentum_swing additionally needs a once-a-month cross-symbol rebalance
+    pass that breakout_swing's plain per-symbol on_candle dispatch doesn't.
+    """
+    from auth.kite_auth import KiteAuth
+    from data.historical import fetch_historical_candles, fetch_instruments
+    from risk.risk_manager import RiskManager
+
+    reset_backtest_data()
+
+    auth = KiteAuth()
+    kite = auth.authenticated_client()
+
+    strategy = build_strategy()
+    risk_manager = RiskManager(
+        settings.capital,
+        settings.risk_pct_per_trade,
+        settings.daily_loss_cap_pct,
+        settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
+    )
+    executor = BacktestExecutor(product_type="CNC")
+    app = TraderApp(strategy, executor, risk_manager)
+
+    instruments = fetch_instruments(kite, "NSE")
+    symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments}
+
+    backtest_start = datetime.now() - timedelta(days=settings.backtest_days)
+    to_date = datetime.now()
+    # Momentum needs lookback_months of history before the backtest window
+    # even begins, or the first many months would have no trailing-return
+    # signal at all.
+    extra_lookback_days = (
+        settings.momentum_swing_lookback_months * 31 if settings.strategy == "momentum_swing" else 5
+    )
+    from_date = backtest_start - timedelta(days=extra_lookback_days)
+
+    candles_by_symbol: dict[str, list[dict]] = {}
+    for symbol in settings.swing_universe:
+        token = symbol_to_token.get(symbol)
+        if token is None:
+            log_error("backtest_swing", f"unknown symbol {symbol}")
+            continue
+        candles_by_symbol[symbol] = fetch_historical_candles(kite, token, from_date, to_date, "day")
+
+    timeline: list[tuple[object, str, dict]] = []
+    for symbol, candles in candles_by_symbol.items():
+        for candle in candles:
+            timeline.append((candle["date"], symbol, candle))
+    timeline.sort(key=lambda item: item[0])
+
+    backtest_start_day = backtest_start.date().isoformat()
+    current_day = None
+    for ts, symbol, candle in timeline:
+        day = ts.date().isoformat() if isinstance(ts, datetime) else str(ts)[:10]
+        if day != current_day:
+            current_day = day
+            if settings.strategy == "momentum_swing" and day >= backtest_start_day:
+                rebalance_date = ts.date() if isinstance(ts, datetime) else ts
+                for rebalance_signal in strategy.compute_rebalance(rebalance_date):
+                    if rebalance_signal.action == Action.BUY:
+                        quantity = risk_manager.equal_weight_position_size(
+                            rebalance_signal.price, settings.swing_capital_pct, settings.momentum_swing_top_n
+                        )
+                    else:
+                        quantity = 0
+                    app.handle_swing_signal(rebalance_signal, day, quantity)
+        if day < backtest_start_day:
+            # Still feeding on_candle so per-symbol history is warm by the
+            # time the backtest window starts, but not trading on it.
+            strategy.on_candle(symbol, candle)
+            continue
+        if settings.strategy == "breakout_swing":
+            app.handle_candle(symbol, candle)
+        else:
+            strategy.on_candle(symbol, candle)
+
+    write_report("backtest", settings, app.open_positions)
+
+
+def run_swing_live_or_paper() -> None:
+    """Runs one swing evaluation pass (latest daily candle per symbol in
+    settings.swing_universe). Meant to be invoked once a day by
+    scheduler.start_swing_scheduler, not looped/blocked on internally."""
+    from auth.kite_auth import KiteAuth
+    from data.historical import fetch_historical_candles, fetch_instruments
+    from risk.risk_manager import RiskManager
+
+    strategy = build_strategy()
+    risk_manager = RiskManager(
+        settings.capital,
+        settings.risk_pct_per_trade,
+        settings.daily_loss_cap_pct,
+        settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
+    )
+    executor = build_executor(settings.mode)
+
+    auth = KiteAuth()
+    kite = auth.authenticated_client()
+
+    def fetch_ltp(symbol: str) -> float | None:
+        try:
+            quote = kite.ltp([f"NSE:{symbol}"])
+            return quote[f"NSE:{symbol}"]["last_price"]
+        except Exception as exc:
+            log_error("swing", f"ltp fetch failed for {symbol}: {exc}")
+            return None
+
+    app = TraderApp(strategy, executor, risk_manager, price_fetcher=fetch_ltp)
+
+    instruments = fetch_instruments(kite, "NSE")
+    symbol_to_token = {
+        i["tradingsymbol"]: i["instrument_token"] for i in instruments if i["tradingsymbol"] in settings.swing_universe
+    }
+
+    now = datetime.now()
+    today = now.date().isoformat()
+    lookback_days = max(
+        settings.momentum_swing_lookback_months * 31 if settings.strategy == "momentum_swing" else 0,
+        settings.breakout_swing_lookback_days * 2 + 5,
+    )
+    from_date = now - timedelta(days=lookback_days)
+
+    for symbol in settings.swing_universe:
+        token = symbol_to_token.get(symbol)
+        if token is None:
+            log_error("swing", f"unknown symbol {symbol}")
+            continue
+        candles = fetch_historical_candles(kite, token, from_date, now, "day")
+        if not candles:
+            continue
+        if settings.strategy == "breakout_swing":
+            app.handle_candle(symbol, candles[-1])
+        else:
+            for candle in candles:
+                strategy.on_candle(symbol, candle)
+
+    if settings.strategy == "momentum_swing":
+        for rebalance_signal in strategy.compute_rebalance(now.date()):
+            if rebalance_signal.action == Action.BUY:
+                quantity = risk_manager.equal_weight_position_size(
+                    rebalance_signal.price, settings.swing_capital_pct, settings.momentum_swing_top_n
+                )
+            else:
+                quantity = 0
+            app.handle_swing_signal(rebalance_signal, today, quantity)
+
+    print_report(settings.mode, app.open_positions)
+
+
 def run_live_or_paper() -> None:
     from auth.kite_auth import KiteAuth
     from data.candle_builder import CandleBuilder
@@ -510,8 +716,13 @@ def main() -> None:
     if settings.mode == "backtest":
         if settings.strategy == "pairs":
             run_backtest_pairs()
+        elif settings.strategy in SWING_STRATEGIES:
+            run_backtest_swing()
         else:
             run_backtest()
+    elif settings.strategy in SWING_STRATEGIES:
+        start_swing_scheduler(run_swing_live_or_paper)
+        run_swing_live_or_paper()
     else:
         run_live_or_paper()
 

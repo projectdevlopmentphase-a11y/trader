@@ -26,7 +26,7 @@ def _get_list(name: str, default: str = "") -> list[str]:
 
 
 VALID_MODES = ("backtest", "paper", "live")
-VALID_STRATEGIES = ("orb", "momentum_halfhour", "pairs")
+VALID_STRATEGIES = ("orb", "momentum_halfhour", "pairs", "momentum_swing", "breakout_swing")
 
 
 @dataclass
@@ -124,6 +124,44 @@ class Settings:
     # mean reversion), so this replaces risk_pct_per_trade for sizing.
     pairs_capital_pct: float = field(
         default_factory=lambda: float(os.getenv("PAIRS_CAPITAL_PCT", "10.0"))
+    )
+
+    # Swing trading (CNC delivery, daily candles, multi-day holds).
+    swing_universe: list[str] = field(
+        default_factory=lambda: _get_list(
+            "SWING_UNIVERSE",
+            "RELIANCE,TCS,INFY,HDFCBANK,ICICIBANK,SBIN,ITC,LT,AXISBANK,KOTAKBANK",
+        )
+    )
+    swing_capital_pct: float = field(
+        default_factory=lambda: float(os.getenv("SWING_CAPITAL_PCT", "30.0"))
+    )
+    momentum_swing_lookback_months: int = field(
+        default_factory=lambda: int(os.getenv("MOMENTUM_SWING_LOOKBACK_MONTHS", "12"))
+    )
+    momentum_swing_skip_months: int = field(
+        default_factory=lambda: int(os.getenv("MOMENTUM_SWING_SKIP_MONTHS", "1"))
+    )
+    momentum_swing_top_n: int = field(
+        default_factory=lambda: int(os.getenv("MOMENTUM_SWING_TOP_N", "5"))
+    )
+    momentum_swing_rebalance_day_of_month: int = field(
+        default_factory=lambda: int(os.getenv("MOMENTUM_SWING_REBALANCE_DAY_OF_MONTH", "1"))
+    )
+    momentum_swing_stop_pct: float = field(
+        default_factory=lambda: float(os.getenv("MOMENTUM_SWING_STOP_PCT", "10.0"))
+    )
+    breakout_swing_lookback_days: int = field(
+        default_factory=lambda: int(os.getenv("BREAKOUT_SWING_LOOKBACK_DAYS", "20"))
+    )
+    breakout_swing_trailing_stop_days: int = field(
+        default_factory=lambda: int(os.getenv("BREAKOUT_SWING_TRAILING_STOP_DAYS", "10"))
+    )
+    swing_min_stop_distance_pct: float = field(
+        default_factory=lambda: float(os.getenv("SWING_MIN_STOP_DISTANCE_PCT", "2.0"))
+    )
+    swing_daily_run_time: str = field(
+        default_factory=lambda: os.getenv("SWING_DAILY_RUN_TIME", "15:45")
     )
 
     # Flat per-fill slippage assumption (basis points) applied unfavorably in

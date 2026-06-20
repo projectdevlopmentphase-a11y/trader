@@ -61,6 +61,29 @@ class RiskManager:
         qty_b = int(qty_a * hedge_ratio)
         return max(0, qty_a), max(0, qty_b)
 
+    def equal_weight_position_size(self, price: float, capital_pct: float, n_positions: int) -> int:
+        """Shares for one of n_positions equal-weight slots, each sized at
+        capital_pct of capital split evenly across the slots."""
+        if price <= 0 or n_positions <= 0:
+            return 0
+        notional = self.capital * (capital_pct / 100) / n_positions
+        return max(0, int(notional / price))
+
+    def swing_position_size(
+        self, entry_price: float, stop_loss_price: float, min_stop_distance_pct: float = 2.0
+    ) -> int:
+        """Same risk-based sizing as position_size, but floors the stop
+        distance at min_stop_distance_pct of entry price -- a tight intraday
+        stop on a multi-day swing hold would otherwise oversize the position
+        relative to the overnight gap risk it's actually exposed to."""
+        if entry_price <= 0:
+            return 0
+        risk_amount = self.capital * (self.risk_pct_per_trade / 100)
+        stop_distance = max(abs(entry_price - stop_loss_price), entry_price * min_stop_distance_pct / 100)
+        if stop_distance <= 0:
+            return 0
+        return max(0, int(risk_amount / stop_distance))
+
     def approve_signal(self, trade_date: str) -> bool:
         """Returns False if trading should be blocked right now (loss cap or kill switch)."""
         if self._killed:

@@ -11,10 +11,13 @@ from strategy.base import Action, Signal
 class BacktestExecutor(OrderExecutor):
     mode = "backtest"
 
+    def __init__(self, product_type: str = "MIS"):
+        self.product_type = product_type
+
     def execute(self, signal: Signal, quantity: int) -> Fill:
         side = "BUY" if signal.action == Action.BUY else "SELL"
         fill_price = apply_slippage(side, signal.price, settings.slippage_bps)
-        cost = calculate_transaction_cost(side, fill_price, quantity)
+        cost = calculate_transaction_cost(side, fill_price, quantity, product_type=self.product_type)
         fill = Fill(
             symbol=signal.symbol,
             side=side,
