@@ -25,12 +25,21 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import product
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Kite's historical-candle endpoint is rate-limited (~3 req/sec); each
+# backtest subprocess fetches candles on startup, so running combinations
+# back-to-back without a gap gets throttled mid-sweep ("Too many requests"),
+# producing ERROR rows instead of real results.
+INTER_RUN_DELAY_SECONDS = 2.0
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_BACKOFF_SECONDS = 10.0
 
 _REPORT_WRITTEN_RE = re.compile(r"Report written to (.+)$", re.MULTILINE)
 _FIELD_PATTERNS = {
@@ -79,13 +88,21 @@ def run_one(
     if pairs_config_path is not None:
         env["PAIRS_CONFIG_PATH"] = pairs_config_path
 
-    proc = subprocess.run(
-        [sys.executable, "main.py"],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    proc = None
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        proc = subprocess.run(
+            [sys.executable, "main.py"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode == 0 or "Too many requests" not in proc.stderr:
+            break
+        if attempt < RATE_LIMIT_RETRIES:
+            print(f"      Kite rate limit hit, retrying in {RATE_LIMIT_BACKOFF_SECONDS:.0f}s...")
+            time.sleep(RATE_LIMIT_BACKOFF_SECONDS)
+
     if proc.returncode != 0:
         result.error = f"exit code {proc.returncode}: {proc.stderr.strip()[-500:]}"
         return result
@@ -190,6 +207,8 @@ def main() -> None:
         status = result.error or f"net={result.net_pnl:.2f}"
         print(f"    -> {status}")
         results.append(result)
+        if i < len(combos):
+            time.sleep(INTER_RUN_DELAY_SECONDS)
 
     summary = build_summary(results)
     print()

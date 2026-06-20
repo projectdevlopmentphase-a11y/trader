@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import datetime
 from itertools import product
 from pathlib import Path
@@ -32,7 +33,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.sweep_pairs import SweepResult, run_one  # noqa: E402
+from scripts.sweep_pairs import INTER_RUN_DELAY_SECONDS, SweepResult, run_one  # noqa: E402
 from strategy.pairs import PairConfig, load_pairs_config  # noqa: E402
 
 TMP_DIR = REPO_ROOT / "reports" / "tune_pairs_tmp"
@@ -69,6 +70,8 @@ def tune_pair(
         status = result.error or f"net={result.net_pnl:.2f} ({result.closed_trades} trades)"
         print(f"      -> {status}")
         results.append(result)
+        if i < len(combos):
+            time.sleep(INTER_RUN_DELAY_SECONDS)
     return results
 
 
