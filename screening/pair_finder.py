@@ -19,7 +19,16 @@ strategy/pairs.py reads at startup.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import asdict, dataclass
+
+if __name__ == "__main__" and __package__ is None:
+    # Allow `python screening/pair_finder.py` directly (not just
+    # `python -m screening.pair_finder`) by putting the repo root -- this
+    # file's parent's parent -- on sys.path so sibling packages like `auth`
+    # and `data` are importable.
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from statsmodels.tsa.stattools import coint
 
