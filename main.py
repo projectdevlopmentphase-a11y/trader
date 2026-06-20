@@ -69,7 +69,8 @@ class TraderApp:
             pnl_b = (fill_b.price - entry_b) * qty_b if side_b == "BUY" else (entry_b - fill_b.price) * qty_b
             pnl = pnl_a + pnl_b
             self.risk_manager.record_pnl(trade_date, pnl)
-            update_last_trade_pnl(symbol_a, pnl)
+            update_last_trade_pnl(symbol_a, pnl_a)
+            update_last_trade_pnl(symbol_b, pnl_b)
             return
 
         qty_a, qty_b = self.risk_manager.pairs_position_size(signal.price, signal.leg2_price, signal.hedge_ratio)
