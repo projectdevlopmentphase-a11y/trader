@@ -172,12 +172,11 @@ def write_report(
     extra: str = "",
     base_dir: str = "reports",
 ) -> str:
-    """Writes the report to a timestamped subfolder instead of stdout (the
-    full trade-by-trade listing can be too long to usefully read in a
-    terminal), printing only a short pointer to where it landed. Each run
-    gets its own folder (named by timestamp, mode, and strategy) so multiple
-    runs' reports can be kept side by side and later collated. Returns the
-    path written."""
+    """Writes the report to a timestamped subfolder (for later reference/diffing
+    across runs) and also prints it to stdout, so the run's outcome is visible
+    immediately without opening the file. Each run gets its own folder (named
+    by timestamp, mode, and strategy) so multiple runs' reports can be kept
+    side by side and later collated. Returns the path written."""
     run_dir = os.path.join(
         base_dir, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mode}_{settings.strategy}"
     )
@@ -189,5 +188,6 @@ def write_report(
         report = extra + "\n" + report
     with open(path, "w") as f:
         f.write(report)
+    print(report)
     print(f"Report written to {path}")
     return path
