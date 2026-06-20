@@ -72,7 +72,7 @@ def _fetch_all(query: str, params: tuple = ()) -> list[tuple]:
         return cur.fetchall()
 
 
-def build_report(mode: str, open_positions: dict | None = None) -> str:
+def build_report(mode: str, open_positions: dict | None = None, include_trade_log: bool = True) -> str:
     lines: list[str] = []
     lines.append("=" * 60)
     lines.append(f"TRADING REPORT (mode={mode})")
@@ -144,7 +144,7 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
     lines.append(f"Errors logged: {errors[0][0]}")
     lines.append("=" * 60)
 
-    if trades:
+    if trades and include_trade_log:
         lines.append("")
         lines.append("All trades:")
         lines.append(
@@ -162,7 +162,7 @@ def build_report(mode: str, open_positions: dict | None = None) -> str:
 
 
 def print_report(mode: str, open_positions: dict | None = None) -> None:
-    print(build_report(mode, open_positions))
+    print(build_report(mode, open_positions, include_trade_log=False))
 
 
 def write_report(
@@ -172,10 +172,12 @@ def write_report(
     extra: str = "",
     base_dir: str = "reports",
 ) -> str:
-    """Writes the report to a timestamped subfolder (for later reference/diffing
-    across runs) and also prints it to stdout, so the run's outcome is visible
-    immediately without opening the file. Each run gets its own folder (named
-    by timestamp, mode, and strategy) so multiple runs' reports can be kept
+    """Writes the full report (including the trade-by-trade log) to a
+    timestamped subfolder for later reference/diffing across runs, and
+    prints a trade-log-free version to stdout so the run's outcome (P&L,
+    per-symbol/per-pair breakdown, diagnostics) is visible immediately
+    without opening the file. Each run gets its own folder (named by
+    timestamp, mode, and strategy) so multiple runs' reports can be kept
     side by side and later collated. Returns the path written."""
     run_dir = os.path.join(
         base_dir, f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{mode}_{settings.strategy}"
@@ -183,11 +185,14 @@ def write_report(
     os.makedirs(run_dir, exist_ok=True)
     path = os.path.join(run_dir, "report.txt")
 
-    report = build_run_header(settings) + "\n" + build_report(mode, open_positions)
+    header = build_run_header(settings)
+    report = header + "\n" + build_report(mode, open_positions)
+    console_report = header + "\n" + build_report(mode, open_positions, include_trade_log=False)
     if extra:
         report = extra + "\n" + report
+        console_report = extra + "\n" + console_report
     with open(path, "w") as f:
         f.write(report)
-    print(report)
+    print(console_report)
     print(f"Report written to {path}")
     return path
