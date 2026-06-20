@@ -1,10 +1,15 @@
 """Historical candle fetch for backtesting via the Kite Connect REST API."""
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from kiteconnect import KiteConnect
+
+_INSTRUMENTS_CACHE_DIR = Path(__file__).resolve().parent.parent / "reports" / "instruments_cache"
+_INSTRUMENTS_CACHE_TTL_SECONDS = 24 * 60 * 60
 
 # Kite's historical API is capped at 3 requests/second; pace every outgoing
 # request (chunks within one call, and successive calls across symbols)
@@ -65,3 +70,28 @@ def fetch_historical_candles(
                 candles.append(candle)
         chunk_start = chunk_end
     return candles
+
+
+def fetch_instruments(kite: KiteConnect, exchange: str = "NSE") -> list[dict]:
+    """Returns the exchange's instrument master, cached to disk for
+    _INSTRUMENTS_CACHE_TTL_SECONDS.
+
+    The instrument master (tradingsymbol/instrument_token mapping) barely
+    changes day to day but is a heavy call -- without caching, every
+    backtest/screen run (and every combination in a parameter sweep) burns
+    a full instrument dump on top of its historical candle requests, which
+    is a major contributor to hitting Kite's rate limit during sweeps.
+    """
+    cache_path = _INSTRUMENTS_CACHE_DIR / f"{exchange}.json"
+    if cache_path.exists():
+        age = time.time() - cache_path.stat().st_mtime
+        if age < _INSTRUMENTS_CACHE_TTL_SECONDS:
+            with open(cache_path) as f:
+                return json.load(f)
+
+    _throttle()
+    instruments = kite.instruments(exchange)
+    _INSTRUMENTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump(instruments, f, default=str)
+    return instruments

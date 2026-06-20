@@ -226,7 +226,7 @@ def build_executor(mode: str) -> OrderExecutor:
 
 def run_backtest() -> None:
     from auth.kite_auth import KiteAuth
-    from data.historical import fetch_historical_candles
+    from data.historical import fetch_historical_candles, fetch_instruments
     from risk.risk_manager import RiskManager
     from strategy.scanner import (
         compute_narrow_range_days,
@@ -251,7 +251,7 @@ def run_backtest() -> None:
     )
     app = TraderApp(strategy, BacktestExecutor(), risk_manager)
 
-    instruments = kite.instruments("NSE")
+    instruments = fetch_instruments(kite, "NSE")
     symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments}
 
     universe = settings.scan_universe or settings.watchlist
@@ -345,7 +345,7 @@ def run_backtest_pairs() -> None:
     must be fed in lockstep by timestamp so PairsStrategy can match them up.
     """
     from auth.kite_auth import KiteAuth
-    from data.historical import fetch_historical_candles
+    from data.historical import fetch_historical_candles, fetch_instruments
     from risk.risk_manager import RiskManager
 
     reset_backtest_data()
@@ -364,7 +364,7 @@ def run_backtest_pairs() -> None:
     )
     app = TraderApp(strategy, BacktestExecutor(), risk_manager)
 
-    instruments = kite.instruments("NSE")
+    instruments = fetch_instruments(kite, "NSE")
     symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments}
 
     square_off_hour, square_off_minute = (int(part) for part in settings.square_off_time.split(":"))
@@ -437,6 +437,7 @@ def build_pairs_z_diagnostics(strategy: PairsStrategy) -> str:
 def run_live_or_paper() -> None:
     from auth.kite_auth import KiteAuth
     from data.candle_builder import CandleBuilder
+    from data.historical import fetch_instruments
     from data.ticker import LiveTicker
     from risk.risk_manager import RiskManager
     from strategy.scanner import rank_candidates, scan_live_universe
@@ -479,7 +480,7 @@ def run_live_or_paper() -> None:
             log_error("scanner", "no symbols qualified for today's watchlist; falling back to static watchlist")
             todays_watchlist = settings.watchlist
 
-    instruments = kite.instruments("NSE")
+    instruments = fetch_instruments(kite, "NSE")
     symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments if i["tradingsymbol"] in todays_watchlist}
     token_to_symbol = {token: symbol for symbol, token in symbol_to_token.items()}
 

@@ -117,7 +117,7 @@ def screen_pairs(
 
 
 def fetch_daily_closes(kite, symbol_to_token: dict[str, int], from_date, to_date) -> dict[str, list[float]]:
-    from data.historical import fetch_historical_candles
+    from data.historical import fetch_historical_candles, fetch_instruments
 
     closes: dict[str, list[float]] = {}
     for symbol, token in symbol_to_token.items():
@@ -136,7 +136,7 @@ def run_screen(output_path: str, formation_days: int = 365) -> list[PairResult]:
 
     candidate_pairs = load_candidate_pairs()
     symbols = sorted({symbol for pair in candidate_pairs for symbol in pair})
-    instruments = kite.instruments("NSE")
+    instruments = fetch_instruments(kite, "NSE")
     symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments if i["tradingsymbol"] in symbols}
 
     to_date = datetime.now()

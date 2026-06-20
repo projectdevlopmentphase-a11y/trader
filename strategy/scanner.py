@@ -190,7 +190,7 @@ def scan_live_universe(
     """
     from datetime import timedelta
 
-    from data.historical import fetch_historical_candles
+    from data.historical import fetch_historical_candles, fetch_instruments
 
     now = now or datetime.now()
     cutoff_time = now.time()
@@ -198,7 +198,7 @@ def scan_live_universe(
     instruments = [f"{exchange}:{symbol}" for symbol in universe]
     quotes = kite.quote(instruments)
 
-    instrument_map = {i["tradingsymbol"]: i["instrument_token"] for i in kite.instruments(exchange)}
+    instrument_map = {i["tradingsymbol"]: i["instrument_token"] for i in fetch_instruments(kite, exchange)}
 
     from_date = now - timedelta(days=lookback_days * 2 + 10)
     to_date = now - timedelta(days=1)  # prior days only, for the baseline
