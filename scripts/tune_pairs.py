@@ -37,6 +37,10 @@ from scripts.sweep_pairs import INTER_RUN_DELAY_SECONDS, SweepResult, run_one  #
 from strategy.pairs import PairConfig, load_pairs_config  # noqa: E402
 
 TMP_DIR = REPO_ROOT / "reports" / "tune_pairs_tmp"
+# Extra gap between pairs (on top of INTER_RUN_DELAY_SECONDS between
+# combos) so switching pairs doesn't immediately chain into the next
+# pair's burst of requests.
+PAIR_COOLDOWN_SECONDS = 15.0
 
 
 def write_isolated_config(pair: PairConfig) -> str:
@@ -131,7 +135,10 @@ def main() -> None:
 
     sections = []
     overall_best = []
-    for pair in pairs:
+    for i, pair in enumerate(pairs):
+        if i > 0:
+            print(f"\nCooling down {PAIR_COOLDOWN_SECONDS:.0f}s before next pair...")
+            time.sleep(PAIR_COOLDOWN_SECONDS)
         results = tune_pair(pair, args.entry_z, args.exit_z, args.spread_lookback, args.capital_pct)
         sections.append(build_pair_section(pair.pair_id, results))
         valid = [r for r in results if not r.error]
