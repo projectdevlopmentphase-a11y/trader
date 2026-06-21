@@ -41,7 +41,15 @@ class BreakoutSwingStrategy(Strategy):
                 signal = Signal(self.name, symbol, Action.EXIT, close, reason="trailing stop hit", ts=candle["date"])
         elif len(state.highs) == self.lookback_days and close > max(state.highs):
             state.position = True
-            signal = Signal(self.name, symbol, Action.BUY, close, reason=f"close broke {self.lookback_days}-day high", ts=candle["date"])
+            # The trailing low is the strategy's actual exit level, so size
+            # off that distance rather than letting risk_manager fall back to
+            # its generic intraday-style 1% default -- that default sizes for
+            # a far tighter stop than this strategy will actually honor.
+            entry_stop = min(state.lows) if state.lows else close
+            signal = Signal(
+                self.name, symbol, Action.BUY, close,
+                reason=f"close broke {self.lookback_days}-day high", stop_price=entry_stop, ts=candle["date"],
+            )
 
         state.highs.append(candle["high"])
         state.lows.append(candle["low"])
