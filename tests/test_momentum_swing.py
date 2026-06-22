@@ -60,6 +60,44 @@ def test_does_not_double_fire_within_same_month():
     assert second == []
 
 
+def test_on_candle_exits_when_stop_pct_breached_mid_month():
+    strategy = make_strategy(stop_pct=10.0)
+    base = datetime(2024, 1, 1)
+    lookback_days = 2 * 22
+
+    _feed_history(strategy, "A", [100 + i for i in range(lookback_days)], base)
+    _feed_history(strategy, "B", [100 + 2 * i for i in range(lookback_days)], base)
+
+    signals = strategy.compute_rebalance(date(2024, 6, 1))
+    entry_price = next(s.price for s in signals if s.symbol == "A")
+
+    # A close more than 10% below the entry price should trigger an
+    # immediate stop-loss exit rather than waiting for next month's
+    # rebalance to notice A fell out of the top-N.
+    stop_candle = make_candle(0, entry_price * 0.85, base=base + timedelta(days=lookback_days))
+    signal = strategy.on_candle("A", stop_candle)
+
+    assert signal is not None
+    assert signal.action == Action.EXIT
+    assert signal.symbol == "A"
+
+
+def test_on_candle_does_not_exit_when_above_stop():
+    strategy = make_strategy(stop_pct=10.0)
+    base = datetime(2024, 1, 1)
+    lookback_days = 2 * 22
+
+    _feed_history(strategy, "A", [100 + i for i in range(lookback_days)], base)
+    _feed_history(strategy, "B", [100 + 2 * i for i in range(lookback_days)], base)
+
+    signals = strategy.compute_rebalance(date(2024, 6, 1))
+    entry_price = next(s.price for s in signals if s.symbol == "A")
+
+    near_stop_candle = make_candle(0, entry_price * 0.95, base=base + timedelta(days=lookback_days))
+    signal = strategy.on_candle("A", near_stop_candle)
+    assert signal is None
+
+
 def test_membership_change_emits_buy_and_exit():
     strategy = make_strategy()
     base = datetime(2024, 1, 1)
@@ -73,12 +111,14 @@ def test_membership_change_emits_buy_and_exit():
     first_buys = {s.symbol for s in first if s.action == Action.BUY}
     assert first_buys == {"A", "B"}
 
-    # Next month: C surges while A goes flat and B keeps rising modestly,
-    # so A (the worst performer of the three) drops out of the top-2.
+    # Next month: C surges while A goes flat (just under its 143 entry
+    # price, but not far enough to breach the 10% stop) and B keeps rising
+    # modestly, so A (the worst performer of the three) drops out of the
+    # top-2 via the rebalance rather than an on_candle stop-loss exit.
     next_base = base + timedelta(days=lookback_days)
     _feed_history(strategy, "C", [200 + 5 * i for i in range(lookback_days)], next_base)
     _feed_history(strategy, "B", [100 + i for i in range(lookback_days)], next_base)
-    _feed_history(strategy, "A", [100] * lookback_days, next_base)
+    _feed_history(strategy, "A", [140] * lookback_days, next_base)
 
     second = strategy.compute_rebalance(date(2024, 7, 1))
     second_buys = {s.symbol for s in second if s.action == Action.BUY}

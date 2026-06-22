@@ -565,7 +565,9 @@ def run_backtest_swing() -> None:
         if settings.strategy == "breakout_swing":
             app.handle_candle(symbol, candle)
         else:
-            strategy.on_candle(symbol, candle)
+            on_candle_signal = strategy.on_candle(symbol, candle)
+            if on_candle_signal is not None:
+                app.handle_swing_signal(on_candle_signal, day, 0)
 
     write_report("backtest", settings, app.open_positions)
 
@@ -626,7 +628,11 @@ def run_swing_live_or_paper() -> None:
             app.handle_candle(symbol, candles[-1])
         else:
             for candle in candles:
-                strategy.on_candle(symbol, candle)
+                on_candle_signal = strategy.on_candle(symbol, candle)
+                if on_candle_signal is not None:
+                    candle_date = candle["date"]
+                    candle_day = candle_date.date().isoformat() if isinstance(candle_date, datetime) else str(candle_date)[:10]
+                    app.handle_swing_signal(on_candle_signal, candle_day, 0)
 
     if settings.strategy == "momentum_swing":
         for rebalance_signal in strategy.compute_rebalance(now.date()):
