@@ -30,6 +30,13 @@ class PairConfig:
     symbol_a: str
     symbol_b: str
     hedge_ratio: float
+    # Per-pair overrides for the strategy-level entry_z/exit_z/spread_lookback
+    # defaults -- different pairs mean-revert at different speeds/volatility,
+    # so a single global threshold rarely suits all of them (see
+    # scripts/tune_pairs.py). None falls back to the strategy default.
+    entry_z: float | None = None
+    exit_z: float | None = None
+    spread_lookback: int | None = None
 
     @property
     def pair_id(self) -> str:
@@ -37,10 +44,17 @@ class PairConfig:
 
 
 def load_pairs_config(path: str) -> list[PairConfig]:
-    """Reads the JSON output of screening/pair_finder.py."""
+    """Reads the JSON output of screening/pair_finder.py, plus any per-pair
+    entry_z/exit_z/spread_lookback overrides added on top of it."""
     with open(path) as f:
         raw = json.load(f)
-    return [PairConfig(p["symbol_a"], p["symbol_b"], p["hedge_ratio"]) for p in raw]
+    return [
+        PairConfig(
+            p["symbol_a"], p["symbol_b"], p["hedge_ratio"],
+            entry_z=p.get("entry_z"), exit_z=p.get("exit_z"), spread_lookback=p.get("spread_lookback"),
+        )
+        for p in raw
+    ]
 
 
 class _PairState:
@@ -72,7 +86,7 @@ class PairsStrategy(Strategy):
             self._symbol_to_pair[pair.symbol_a] = pair
             self._symbol_to_pair[pair.symbol_b] = pair
         self._state: dict[str, _PairState] = {
-            pair.pair_id: _PairState(spread_lookback) for pair in pairs
+            pair.pair_id: _PairState(pair.spread_lookback or spread_lookback) for pair in pairs
         }
         # Every z-score computed, kept for diagnostics (e.g. tuning entry_z).
         self.z_history: dict[str, list[float]] = {pair.pair_id: [] for pair in pairs}
@@ -107,7 +121,8 @@ class PairsStrategy(Strategy):
         price_b = state.last_price[pair.symbol_b]
         spread = price_a - pair.hedge_ratio * price_b
         state.spread_history.append(spread)
-        if len(state.spread_history) < self.spread_lookback:
+        effective_lookback = pair.spread_lookback or self.spread_lookback
+        if len(state.spread_history) < effective_lookback:
             return None
 
         mean = sum(state.spread_history) / len(state.spread_history)
@@ -118,8 +133,11 @@ class PairsStrategy(Strategy):
         z = (spread - mean) / std
         self.z_history[pair.pair_id].append(z)
 
+        entry_z = pair.entry_z if pair.entry_z is not None else self.entry_z
+        exit_z = pair.exit_z if pair.exit_z is not None else self.exit_z
+
         if state.position is None:
-            if z <= -self.entry_z:
+            if z <= -entry_z:
                 state.position = "long_a_short_b"
                 return Signal(
                     self.name, pair.symbol_a, Action.BUY, price_a,
@@ -127,7 +145,7 @@ class PairsStrategy(Strategy):
                     pair_id=pair.pair_id, leg2_symbol=pair.symbol_b,
                     leg2_action=Action.SELL, leg2_price=price_b, hedge_ratio=pair.hedge_ratio,
                 )
-            if z >= self.entry_z:
+            if z >= entry_z:
                 state.position = "short_a_long_b"
                 return Signal(
                     self.name, pair.symbol_a, Action.SELL, price_a,
@@ -137,7 +155,7 @@ class PairsStrategy(Strategy):
                 )
             return None
 
-        if abs(z) <= self.exit_z:
+        if abs(z) <= exit_z:
             state.position = None
             return Signal(
                 self.name, pair.symbol_a, Action.EXIT, price_a,

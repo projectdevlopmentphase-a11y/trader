@@ -58,6 +58,21 @@ def test_entry_long_a_short_b_when_spread_drops():
     assert signal.pair_id == "A_B"
 
 
+def test_per_pair_overrides_take_precedence_over_strategy_defaults():
+    # Strategy-level entry_z=10 would never fire on a +/-10 move; the pair's
+    # own override of 2.0 should be the one actually used.
+    pair = PairConfig("A", "B", hedge_ratio=1.0, entry_z=2.0, exit_z=0.5, spread_lookback=20)
+    strategy = PairsStrategy([pair], spread_lookback=200, entry_z=10.0, exit_z=5.0)
+    base = datetime(2024, 1, 1, 9, 15)
+
+    prices_a = [100] * 20 + [90]
+    prices_b = [100] * 20 + [100]
+    signals = feed_day(strategy, base, prices_a, prices_b)
+
+    assert len(signals) == 1
+    assert signals[0].action == Action.BUY
+
+
 def test_entry_short_a_long_b_when_spread_rises():
     pair = PairConfig("A", "B", hedge_ratio=1.0)
     strategy = PairsStrategy([pair], spread_lookback=20, entry_z=2.0, exit_z=0.5)
