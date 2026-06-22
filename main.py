@@ -414,6 +414,7 @@ def run_backtest_pairs() -> None:
         settings.daily_loss_cap_pct,
         settings.max_consecutive_errors,
         settings.pairs_capital_pct,
+        n_pairs=len(pairs),
     )
     app = TraderApp(strategy, BacktestExecutor(), risk_manager)
 
@@ -649,12 +650,14 @@ def run_live_or_paper() -> None:
     from strategy.scanner import rank_candidates, scan_live_universe
 
     strategy = build_strategy()
+    n_pairs = len(load_pairs_config(settings.pairs_config_path)) if settings.strategy == "pairs" else 1
     risk_manager = RiskManager(
         settings.capital,
         settings.risk_pct_per_trade,
         settings.daily_loss_cap_pct,
         settings.max_consecutive_errors,
         settings.pairs_capital_pct,
+        n_pairs=n_pairs,
     )
     executor = build_executor(settings.mode)
 

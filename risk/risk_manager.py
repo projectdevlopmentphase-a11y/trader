@@ -21,12 +21,17 @@ class RiskManager:
         daily_loss_cap_pct: float,
         max_consecutive_errors: int,
         pairs_capital_pct: float = 10.0,
+        n_pairs: int = 1,
     ):
         self.capital = capital
         self.risk_pct_per_trade = risk_pct_per_trade
         self.daily_loss_cap_pct = daily_loss_cap_pct
         self.max_consecutive_errors = max_consecutive_errors
-        self.pairs_capital_pct = pairs_capital_pct
+        # Each pair independently targets pairs_capital_pct of capital, so
+        # with n_pairs configured pairs that could oversubscribe capital by
+        # up to n_pairs x if they're all open at once -- split evenly across
+        # the configured pairs up front instead.
+        self.pairs_capital_pct = pairs_capital_pct / max(1, n_pairs)
         self._consecutive_errors = 0
         self._killed = False
 

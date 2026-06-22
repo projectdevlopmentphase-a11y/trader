@@ -49,6 +49,24 @@ def test_pairs_position_size_zero_price_returns_zero(risk_manager):
     assert risk_manager.pairs_position_size(price_a=0, price_b=50, hedge_ratio=1.0) == (0, 0)
 
 
+def test_pairs_position_size_splits_capital_pct_across_n_pairs():
+    from risk.risk_manager import RiskManager
+
+    # Same setup as test_pairs_position_size_uses_notional_and_scales_by_hedge_ratio,
+    # but with 2 configured pairs the 10% capital_pct should be halved to 5%:
+    # total_notional = 5% of 100000 = 5000 -> qty_a = 25, qty_b = 50.
+    risk_manager = RiskManager(
+        capital=100000,
+        risk_pct_per_trade=1.0,
+        daily_loss_cap_pct=3.0,
+        max_consecutive_errors=3,
+        n_pairs=2,
+    )
+    qty_a, qty_b = risk_manager.pairs_position_size(price_a=100, price_b=50, hedge_ratio=2.0)
+    assert qty_a == 25
+    assert qty_b == 50
+
+
 def test_daily_loss_cap_halts_trading(risk_manager):
     assert risk_manager.approve_signal("2026-06-18") is True
     risk_manager.record_pnl("2026-06-18", -3500)  # exceeds 3% of 100000 = 3000
