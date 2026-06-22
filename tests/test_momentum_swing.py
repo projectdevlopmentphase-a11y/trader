@@ -125,3 +125,43 @@ def test_membership_change_emits_buy_and_exit():
     second_exits = {s.symbol for s in second if s.action == Action.EXIT}
     assert "C" in second_buys
     assert "A" in second_exits
+
+
+def test_stopped_out_symbol_excluded_from_reentry_during_cooldown():
+    strategy = make_strategy(top_n=1, stop_cooldown_months=1)
+    base = datetime(2024, 1, 1)
+    lookback_days = 2 * 22
+
+    # A is the clear momentum leader; B is far behind.
+    _feed_history(strategy, "A", [100 + i for i in range(lookback_days)], base)
+    _feed_history(strategy, "B", [100 + 0.1 * i for i in range(lookback_days)], base)
+
+    signals = strategy.compute_rebalance(date(2024, 6, 1))
+    entry_price = next(s.price for s in signals if s.symbol == "A")
+    assert {s.symbol for s in signals if s.action == Action.BUY} == {"A"}
+
+    # A gets stopped out mid-June.
+    stop_candle = make_candle(0, entry_price * 0.85, base=datetime(2024, 6, 15))
+    stop_signal = strategy.on_candle("A", stop_candle)
+    assert stop_signal is not None and stop_signal.action == Action.EXIT
+
+    # A is still fed strong continued uptrend data, so it would still rank
+    # #1 by momentum next month -- but it should be skipped during cooldown,
+    # falling back to B instead of whipsawing straight back into A.
+    next_base = base + timedelta(days=lookback_days)
+    _feed_history(strategy, "A", [100 + i for i in range(lookback_days)], next_base)
+    _feed_history(strategy, "B", [100 + 0.1 * i for i in range(lookback_days)], next_base)
+
+    second = strategy.compute_rebalance(date(2024, 7, 1))
+    second_buys = {s.symbol for s in second if s.action == Action.BUY}
+    assert "A" not in second_buys
+    assert second_buys == {"B"}
+
+    # After the cooldown period elapses, A becomes eligible again.
+    third_base = next_base + timedelta(days=lookback_days)
+    _feed_history(strategy, "A", [100 + i for i in range(lookback_days)], third_base)
+    _feed_history(strategy, "B", [100 + 0.1 * i for i in range(lookback_days)], third_base)
+
+    third = strategy.compute_rebalance(date(2024, 8, 1))
+    third_buys = {s.symbol for s in third if s.action == Action.BUY}
+    assert "A" in third_buys
