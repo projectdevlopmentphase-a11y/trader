@@ -26,7 +26,7 @@ def _get_list(name: str, default: str = "") -> list[str]:
 
 
 VALID_MODES = ("backtest", "paper", "live")
-VALID_STRATEGIES = ("orb", "momentum_halfhour", "pairs", "momentum_swing", "breakout_swing")
+VALID_STRATEGIES = ("orb", "momentum_halfhour", "pairs", "momentum_swing", "breakout_swing", "vwap_breakout")
 
 
 @dataclass
@@ -162,6 +162,34 @@ class Settings:
     )
     swing_daily_run_time: str = field(
         default_factory=lambda: os.getenv("SWING_DAILY_RUN_TIME", "15:45")
+    )
+
+    # VWAP breakout (intraday, 5-minute candles, MIS).
+    vwap_universe: list[str] = field(
+        default_factory=lambda: [
+            s.strip() for s in os.getenv(
+                "VWAP_UNIVERSE",
+                "CIPLA,MARUTI,SUNPHARMA,DRREDDY,ASIANPAINT,POWERGRID,SHRIRAMFIN",
+            ).split(",") if s.strip()
+        ]
+    )
+    vwap_capital_pct: float = field(
+        default_factory=lambda: float(os.getenv("VWAP_CAPITAL_PCT", "30.0"))
+    )
+    vwap_stop_pct: float = field(
+        default_factory=lambda: float(os.getenv("VWAP_STOP_PCT", "1.5"))
+    )
+    vwap_min_candles_after_open: int = field(
+        default_factory=lambda: int(os.getenv("VWAP_MIN_CANDLES_AFTER_OPEN", "6"))
+    )
+    vwap_volume_multiplier: float = field(
+        default_factory=lambda: float(os.getenv("VWAP_VOLUME_MULTIPLIER", "1.5"))
+    )
+    vwap_volume_lookback: int = field(
+        default_factory=lambda: int(os.getenv("VWAP_VOLUME_LOOKBACK", "10"))
+    )
+    vwap_candle_interval: str = field(
+        default_factory=lambda: os.getenv("VWAP_CANDLE_INTERVAL", "5minute")
     )
 
     # Flat per-fill slippage assumption (basis points) applied unfavorably in

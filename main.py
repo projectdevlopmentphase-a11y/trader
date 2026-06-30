@@ -17,12 +17,14 @@ from storage.db import log_error, log_signal, reset_backtest_data, update_last_t
 from storage.report import print_report, write_report
 from strategy.base import Action, Signal
 from strategy.breakout_swing import BreakoutSwingStrategy
+from strategy.vwap_breakout import VWAPBreakoutStrategy
 from strategy.momentum_halfhour import MomentumHalfHourStrategy
 from strategy.momentum_swing import MomentumSwingStrategy
 from strategy.orb import ORBStrategy
 from strategy.pairs import PairsStrategy, load_pairs_config
 
 SWING_STRATEGIES = ("momentum_swing", "breakout_swing")
+VWAP_STRATEGIES = ("vwap_breakout",)
 
 
 class TraderApp:
@@ -248,6 +250,13 @@ def build_strategy():
         return BreakoutSwingStrategy(
             settings.breakout_swing_lookback_days,
             settings.breakout_swing_trailing_stop_days,
+        )
+    if settings.strategy == "vwap_breakout":
+        return VWAPBreakoutStrategy(
+            settings.vwap_stop_pct,
+            settings.vwap_min_candles_after_open,
+            settings.vwap_volume_multiplier,
+            settings.vwap_volume_lookback,
         )
     return ORBStrategy(
         settings.orb_range_minutes,
@@ -721,17 +730,147 @@ def run_live_or_paper() -> None:
         print_report(settings.mode, app.open_positions)
 
 
+def run_backtest_vwap() -> None:
+    """Backtest the VWAP breakout strategy on 5-minute candles fetched from
+    Kite.  Each symbol's candles are merged into a single timeline and
+    replayed in order so the intraday VWAP accumulates correctly day by day.
+    Positions that are still open at the end of each trading day are squared
+    off at the last available candle's close, mirroring the live EOD
+    square-off behaviour."""
+    from auth.kite_auth import KiteAuth
+    from data.historical import fetch_historical_candles, fetch_instruments
+    from risk.risk_manager import RiskManager
+
+    reset_backtest_data()
+
+    auth = KiteAuth()
+    kite = auth.authenticated_client()
+
+    strategy = build_strategy()
+    risk_manager = RiskManager(
+        settings.capital,
+        settings.risk_pct_per_trade,
+        settings.daily_loss_cap_pct,
+        settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
+    )
+    executor = BacktestExecutor(product_type="MIS")
+    app = TraderApp(strategy, executor, risk_manager)
+
+    instruments = fetch_instruments(kite, "NSE")
+    symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments}
+
+    from_date = datetime.now() - timedelta(days=settings.backtest_days)
+    to_date = datetime.now()
+
+    candles_by_symbol_day: dict[str, dict[str, list[dict]]] = {}
+    for symbol in settings.vwap_universe:
+        token = symbol_to_token.get(symbol)
+        if token is None:
+            log_error("backtest_vwap", f"unknown symbol {symbol}")
+            continue
+        candles = fetch_historical_candles(kite, token, from_date, to_date, settings.vwap_candle_interval)
+        candles_by_symbol_day[symbol] = group_candles_by_day(candles)
+
+    all_days = sorted({day for by_day in candles_by_symbol_day.values() for day in by_day})
+
+    square_off_hour, square_off_minute = (int(p) for p in settings.square_off_time.split(":"))
+    square_off_cutoff = dt_time(square_off_hour, square_off_minute)
+
+    for day in all_days:
+        # Build a merged, time-sorted list of candles across all symbols for
+        # this day so VWAP accumulates in strict chronological order.
+        day_timeline: list[tuple[object, str, dict]] = []
+        last_candle_per_symbol: dict[str, dict] = {}
+        for symbol, by_day in candles_by_symbol_day.items():
+            for candle in by_day.get(day, []):
+                day_timeline.append((candle["date"], symbol, candle))
+                if not isinstance(candle["date"], datetime) or candle["date"].time() <= square_off_cutoff:
+                    last_candle_per_symbol[symbol] = candle
+        day_timeline.sort(key=lambda item: item[0])
+
+        for ts, symbol, candle in day_timeline:
+            if isinstance(ts, datetime) and ts.time() > square_off_cutoff:
+                break
+            sig = strategy.on_candle(symbol, candle)
+            if sig is not None:
+                quantity = risk_manager.position_size(sig.price, sig.stop_price) if sig.action == Action.BUY else 0
+                app._handle_signal(sig, day)
+
+        # EOD square-off: close any remaining open positions at last candle.
+        for symbol, pos in list(app.open_positions.items()):
+            last = last_candle_per_symbol.get(symbol)
+            if last is not None:
+                app.square_off_symbol(symbol, last["close"], day, ts=last["date"])
+                sig = strategy.on_candle(symbol, {**last, "close": last["close"] - 0.01})
+
+    write_report("backtest", settings, app.open_positions)
+
+
+def run_vwap_live_or_paper() -> None:
+    """Fetch today's 5-minute candles for each symbol in vwap_universe,
+    replay them through VWAPBreakoutStrategy, and execute any resulting
+    signals.  Meant to be called once per candle interval by the scheduler."""
+    from auth.kite_auth import KiteAuth
+    from data.historical import fetch_historical_candles, fetch_instruments
+    from risk.risk_manager import RiskManager
+
+    strategy = build_strategy()
+    risk_manager = RiskManager(
+        settings.capital,
+        settings.risk_pct_per_trade,
+        settings.daily_loss_cap_pct,
+        settings.max_consecutive_errors,
+        settings.pairs_capital_pct,
+    )
+    executor = build_executor(settings.mode)
+    app = TraderApp(strategy, executor, risk_manager)
+
+    auth = KiteAuth()
+    kite = auth.authenticated_client()
+
+    instruments = fetch_instruments(kite, "NSE")
+    symbol_to_token = {i["tradingsymbol"]: i["instrument_token"] for i in instruments}
+
+    today = datetime.now()
+    from_date = today.replace(hour=9, minute=0, second=0, microsecond=0)
+
+    square_off_hour, square_off_minute = (int(p) for p in settings.square_off_time.split(":"))
+    square_off_cutoff = dt_time(square_off_hour, square_off_minute)
+
+    day_str = today.date().isoformat()
+
+    for symbol in settings.vwap_universe:
+        token = symbol_to_token.get(symbol)
+        if token is None:
+            log_error("vwap_live", f"unknown symbol {symbol}")
+            continue
+        candles = fetch_historical_candles(kite, token, from_date, today, settings.vwap_candle_interval)
+        tradable = [c for c in candles if not isinstance(c["date"], datetime) or c["date"].time() <= square_off_cutoff]
+        for candle in tradable:
+            sig = strategy.on_candle(symbol, candle)
+            if sig is not None:
+                quantity = risk_manager.position_size(sig.price, sig.stop_price) if sig.action == Action.BUY else 0
+                app._handle_signal(sig, day_str)
+
+    print_report(settings.mode, app.open_positions)
+
+
 def main() -> None:
     if settings.mode == "backtest":
         if settings.strategy == "pairs":
             run_backtest_pairs()
         elif settings.strategy in SWING_STRATEGIES:
             run_backtest_swing()
+        elif settings.strategy in VWAP_STRATEGIES:
+            run_backtest_vwap()
         else:
             run_backtest()
     elif settings.strategy in SWING_STRATEGIES:
         start_swing_scheduler(run_swing_live_or_paper)
         run_swing_live_or_paper()
+    elif settings.strategy in VWAP_STRATEGIES:
+        run_vwap_live_or_paper()
     else:
         run_live_or_paper()
 
