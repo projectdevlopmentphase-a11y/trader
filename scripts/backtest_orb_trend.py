@@ -165,7 +165,7 @@ def _summary(trades: list[dict]) -> dict:
 def _print_report(trades: list[dict]) -> None:
     s = _summary(trades)
     print("\n" + "=" * 72)
-    print("ORB + TREND CONFIRMATION  |  1-min  |  09:15–09:30 ORB  |  Nifty50")
+    print("ORB + TREND CONFIRMATION  |  5-min  |  09:15–09:30 ORB  |  Nifty50")
     print("=" * 72)
     print(f"  Trades     : {s['trades']}  (long={s['long_trades']}, short={s['short_trades']})")
     print(f"  Win rate   : {s['win_rate']:.1f}%  ({s['wins']} wins)")
@@ -202,7 +202,7 @@ def main() -> None:
     to_date   = datetime.now()
     from_date = to_date - timedelta(days=args.months * 30)
 
-    print(f"ORB Trend backtest  |  {args.months} months  |  {len(universe)} symbols")
+    print(f"ORB Trend backtest  |  5-min candles  |  {args.months} months  |  {len(universe)} symbols")
     print(f"Window: {from_date.date()} → {to_date.date()}")
     print()
 
@@ -221,7 +221,7 @@ def main() -> None:
             print(f"  [{idx:>2}/{len(universe)}] {symbol:<14} SKIP (unknown)")
             continue
 
-        candles  = fetch_historical_candles(kite, token, from_date, to_date, "minute")
+        candles  = fetch_historical_candles(kite, token, from_date, to_date, "5minute")
         strategy = ORBTrendStrategy()
         trades   = replay_symbol(symbol, candles, strategy)
         del candles
