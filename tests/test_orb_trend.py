@@ -196,6 +196,7 @@ def test_stop_loss_closes_long():
     state.stop_price = 99.0
     state.target_price = 103.5
     state.risk = 2.0
+    state.peak_price = 101.0
     state.trailing = False
 
     # Drop below stop
@@ -220,11 +221,12 @@ def test_profit_target_closes_long():
     state.position = "LONG"
     state.entry_price = 101.0
     state.stop_price = 99.5
-    state.target_price = 103.25
+    state.target_price = 102.5   # 1R target (risk=1.5 → 1×risk away, but target_r=1.0 default)
     state.risk = 1.5
+    state.peak_price = 101.0
     state.trailing = False
 
-    sig = s.on_candle(sym, candle(_dt(9, 40, day=3), 103.5))
+    sig = s.on_candle(sym, candle(_dt(9, 40, day=3), 102.6))
     assert sig is not None
     assert sig.action == Action.EXIT
     assert "target" in sig.reason
@@ -245,19 +247,25 @@ def test_trailing_activates_at_1r():
     state.position = "LONG"
     state.entry_price = 100.0
     state.stop_price = 98.5
-    state.target_price = 102.25
+    state.target_price = 101.5   # 1R target
     state.risk = 1.5
+    state.peak_price = 100.0
     state.trailing = False
 
-    # Price at entry + 1R
+    # Close just below target — not enough to exit; exactly at 1R so trail activates.
+    # Use a price between entry+1R (101.5) and target (101.5): need price > target to
+    # NOT fire target exit first and also >= entry+risk.  Set target higher to test trail.
+    state.target_price = 105.0
     s.on_candle(sym, candle(_dt(9, 40, day=3), 101.5))
     assert state.trailing is True
+    # Stop must be at least at entry (breakeven), and may be higher if ATR trail fired.
+    assert state.stop_price >= 100.0
 
 
-def test_ma21_trend_break_exits_long():
-    """Close < MA21 while in a LONG → EXIT with trend break reason."""
-    s = ORBTrendStrategy(atr_period=2, ma_fast=2, ma_slow=3)
-    sym = "TB"
+def test_atr_trail_stop_ratchets_up():
+    """ATR trail stop rises as price peaks; fires when price retraces."""
+    s = ORBTrendStrategy(atr_period=2, ma_fast=2, ma_slow=3, atr_multiplier=1.0)
+    sym = "ATR"
     _prime_strategy(s, sym, days=2)
     for m in range(15):
         s.on_candle(sym, candle(_dt(9, 15 + m, day=3), 100.3, high=100.6, low=100.0))
@@ -268,20 +276,48 @@ def test_ma21_trend_break_exits_long():
     state = s._state_for(sym)
     state.position = "LONG"
     state.entry_price = 100.0
-    state.stop_price = 95.0   # far away
+    state.stop_price = 100.0   # already at breakeven (trail active)
     state.target_price = 110.0
-    state.risk = 5.0
-    state.trailing = False
+    state.risk = 1.0
+    state.peak_price = 103.0   # price peaked at 103
+    state.trailing = True
 
-    # Feed very low price so MA slow also drops, then check close < ma_slow
-    # Easier: just verify _manage returns EXIT when close < ma_slow
-    # We manipulate closes to make ma_slow ~100, then close < 100
-    from collections import deque
-    state.closes = deque([100.5] * 3, maxlen=3)
-    sig = s.on_candle(sym, candle(_dt(9, 40, day=3), 99.0))
+    # The close jump from ~100.4 to the test candle inflates ATR; use a low
+    # enough close that it falls inside the ATR band below the 103.0 peak.
+    # close=101.0 → TR ≈ 0.6, ATR ≈ 0.3–1.0; trail_stop = 103 - 1×ATR ≈ 102.
+    # close ≤ trail_stop → EXIT.
+    sig = s.on_candle(sym, candle(_dt(9, 40, day=3), 101.0))
     assert sig is not None
     assert sig.action == Action.EXIT
-    assert "MA21" in sig.reason or "trend" in sig.reason.lower()
+    assert "ATR trail" in sig.reason
+
+
+def test_ma21_not_used_as_exit():
+    """MA21 cross below entry price should NOT trigger exit (MA21 removed)."""
+    s = ORBTrendStrategy(atr_period=2, ma_fast=2, ma_slow=3)
+    sym = "NOMA"
+    _prime_strategy(s, sym, days=2)
+    for m in range(15):
+        s.on_candle(sym, candle(_dt(9, 15 + m, day=3), 100.3, high=100.6, low=100.0))
+    s.on_candle(sym, candle(_dt(9, 30, day=3), 100.3))
+    for m in range(1, 6):
+        s.on_candle(sym, candle(_dt(9, 30 + m, day=3), 100.4))
+
+    state = s._state_for(sym)
+    state.position = "LONG"
+    state.entry_price = 100.0
+    state.stop_price = 90.0     # far below — won't be hit
+    state.target_price = 120.0  # far above — won't be hit
+    state.risk = 10.0
+    state.peak_price = 100.0
+    state.trailing = False
+
+    from collections import deque
+    # MA slow ~100.5, close 99 → MA cross would have fired before, but not now.
+    state.closes = deque([100.5] * 3, maxlen=3)
+    sig = s.on_candle(sym, candle(_dt(9, 40, day=3), 99.0))
+    # Should be None — no MA21 exit, no stop hit (stop=90), no target hit.
+    assert sig is None
 
 
 # ── 3:15 PM time exit ────────────────────────────────────────────────────────

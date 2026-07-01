@@ -1,8 +1,8 @@
-"""ORB + Trend Confirmation (intraday, 1-minute candles, MIS, long & short).
+"""ORB + Trend Confirmation (intraday, 5-minute candles, MIS, long & short).
 
 Setup
 ─────
-09:15–09:30  Mark opening-range high and low from 1-min candles.
+09:15–09:30  Mark opening-range high and low from 5-min candles.
 09:30–09:45  Breakout detection window.
 
 Entry (Long)
@@ -18,29 +18,33 @@ Filters (skip the day / signal)
 ────────────────────────────────
 • ORB range < 0.3% of ORB low  → too tight, low reward.
 • ORB range > 1.5% of ORB low  → too volatile, bad R:R.
-• No entries in the first 2 candles after 09:15 (9:15–9:16 are spread noise;
-  because the entry window starts at 9:30 this filter is effectively a guard
-  against accidentally entering on pre-9:30 data).
 
 Stop Loss
 ──────────
-ATR-based  : entry_candle_low  − 1.5 × ATR(14)   (long)
-             entry_candle_high + 1.5 × ATR(14)   (short)
+ATR-based  : entry_candle_low  − atr_multiplier × ATR(14)   (long)
+             entry_candle_high + atr_multiplier × ATR(14)   (short)
 ORB-based  : ORB midpoint
 Use whichever stop is tighter (smaller risk distance from entry).
 
-Target
-───────
-• Minimum 1.5 × risk (1.5R).
-• Once 1R is achieved, switch to trailing MA9 (exit on close < MA9 for long,
-  close > MA9 for short).
+Target & Trail
+───────────────
+• Fixed R-multiple target (default 1R; configurable via target_r).
+• At 1R profit: stop moves to entry (breakeven lock).
+• After breakeven lock: trail with ATR stop —
+    trail_stop = peak_price − atr_multiplier × ATR  (long)
+    trail_stop = peak_price + atr_multiplier × ATR  (short)
+  where peak_price is the best close seen since entry.
+  Trail stop only moves in the favourable direction (ratchets up/down).
 
 Exit rules
 ───────────
-• Stop hit.
-• Target hit (or MA9 trail after 1R).
-• Close below MA21 (long) / above MA21 (short) — trend break.
+• Fixed target hit (before trail activates at 1R).
+• ATR trail stop hit (after 1R breakeven lock).
+• Hard initial stop hit.
 • 3:15 PM time exit (MIS, no overnight).
+
+MA21 cross is intentionally NOT used as an exit — it triggered premature
+exits before the trade could run.
 """
 from __future__ import annotations
 
@@ -80,9 +84,10 @@ class _SymbolState:
         self.entry_candle_low: float | None = None
         self.stop_price: float | None = None
         self.target_price: float | None = None
-        self.risk: float | None = None   # 1R
-        self.trailing: bool = False      # MA9 trail active
-        self.time_exited: bool = False   # 3:15 exit already fired today
+        self.risk: float | None = None       # 1R distance
+        self.trailing: bool = False          # ATR trail active (breakeven locked)
+        self.peak_price: float | None = None # best close since entry
+        self.time_exited: bool = False       # 3:15 exit already fired today
         # Day tracking
         self.last_day: str | None = None
 
@@ -100,7 +105,7 @@ class ORBTrendStrategy(Strategy):
         volume_multiplier: float = 1.5,
         orb_min_range_pct: float = 0.3,
         orb_max_range_pct: float = 1.5,
-        target_r: float = 1.5,
+        target_r: float = 1.0,
     ):
         self.atr_period      = atr_period
         self.atr_multiplier  = atr_multiplier
@@ -162,6 +167,7 @@ class ORBTrendStrategy(Strategy):
             state.entry_price   = state.stop_price = state.target_price = None
             state.risk          = None
             state.trailing      = False
+            state.peak_price    = None
             state.time_exited   = False
             state.last_day      = day
             # Note: prev_close, true_ranges, closes, recent_volumes are NOT
@@ -209,7 +215,7 @@ class ORBTrendStrategy(Strategy):
 
         # ── Manage open position ─────────────────────────────────────────────
         if state.position is not None:
-            return self._manage(state, close, ma_fast, ma_slow, ts)
+            return self._manage(state, close, ts)
 
         # ── Entry check (9:30–9:45) ──────────────────────────────────────────
         if (
@@ -268,14 +274,15 @@ class ORBTrendStrategy(Strategy):
         risk   = abs(close - stop)
         target = close + self.target_r * risk if direction == "LONG" else close - self.target_r * risk
 
-        state.position         = direction
-        state.entry_price      = close
+        state.position          = direction
+        state.entry_price       = close
         state.entry_candle_high = high
         state.entry_candle_low  = low
-        state.stop_price       = stop
-        state.target_price     = target
-        state.risk             = risk
-        state.trailing         = False
+        state.stop_price        = stop
+        state.target_price      = target
+        state.risk              = risk
+        state.trailing          = False
+        state.peak_price        = close
 
         orb_info = (f"ORB={state.orb_high:.2f}/{state.orb_low:.2f}"
                     f"({state.orb_range_pct:.2f}%) stop={stop:.2f} tgt={target:.2f}")
@@ -288,41 +295,57 @@ class ORBTrendStrategy(Strategy):
         self,
         state: _SymbolState,
         close: float,
-        ma_fast: float | None,
-        ma_slow: float | None,
         ts,
     ) -> Signal | None:
         direction = state.position
+        atr = self._atr(state)
 
         if direction == "LONG":
-            # Stop hit.
+            # Ratchet peak upward.
+            if close > state.peak_price:
+                state.peak_price = close
+
+            # Hard stop (initial or breakeven-locked).
             if close <= state.stop_price:
                 return self._close(state, close, "stop loss hit", ts)
-            # Target checked before activating trailing so a candle that
-            # simultaneously reaches 1R and the 1.5R target exits cleanly.
+
+            # Fixed target hit (before trail activates).
             if not state.trailing and close >= state.target_price:
                 return self._close(state, close, f"profit target hit ({self.target_r}R)", ts)
-            # Activate trailing once 1R profit is reached.
+
+            # At 1R: lock stop to breakeven and switch to ATR trail.
             if state.risk and not state.trailing and close >= state.entry_price + state.risk:
                 state.trailing = True
-            # MA9 trail (only after trailing activated).
-            if state.trailing and ma_fast is not None and close < ma_fast:
-                return self._close(state, close, "MA9 trail exit (1R+ achieved)", ts)
-            # MA21 trend break.
-            if ma_slow is not None and close < ma_slow:
-                return self._close(state, close, "close below MA21 (trend break)", ts)
+                state.stop_price = state.entry_price  # breakeven lock
+
+            # ATR trail: stop = peak − atr_multiplier×ATR (ratchets up).
+            if state.trailing and atr is not None:
+                trail_stop = state.peak_price - self.atr_multiplier * atr
+                if trail_stop > state.stop_price:
+                    state.stop_price = trail_stop
+                if close <= state.stop_price:
+                    return self._close(state, close, "ATR trail stop hit (1R+ achieved)", ts)
 
         else:  # SHORT
+            if close < state.peak_price:
+                state.peak_price = close
+
             if close >= state.stop_price:
                 return self._close(state, close, "stop loss hit", ts)
+
             if not state.trailing and close <= state.target_price:
                 return self._close(state, close, f"profit target hit ({self.target_r}R)", ts)
+
             if state.risk and not state.trailing and close <= state.entry_price - state.risk:
                 state.trailing = True
-            if state.trailing and ma_fast is not None and close > ma_fast:
-                return self._close(state, close, "MA9 trail exit (1R+ achieved)", ts)
-            if ma_slow is not None and close > ma_slow:
-                return self._close(state, close, "close above MA21 (trend break)", ts)
+                state.stop_price = state.entry_price
+
+            if state.trailing and atr is not None:
+                trail_stop = state.peak_price + self.atr_multiplier * atr
+                if trail_stop < state.stop_price:
+                    state.stop_price = trail_stop
+                if close >= state.stop_price:
+                    return self._close(state, close, "ATR trail stop hit (1R+ achieved)", ts)
 
         return None
 
@@ -331,6 +354,7 @@ class ORBTrendStrategy(Strategy):
         state.position = state.entry_price = state.stop_price = None
         state.target_price = state.risk = None
         state.trailing = False
+        state.peak_price = None
         return Signal(
             self.name, state.last_day, Action.EXIT, price, reason=reason, ts=ts,
         )
