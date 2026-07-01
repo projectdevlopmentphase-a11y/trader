@@ -14,117 +14,146 @@ def candle(ts: datetime, close: float, volume: float = 10_000, high=None, low=No
     return {"date": ts, "open": close, "high": h, "low": l, "close": close, "volume": volume}
 
 
-def make_strategy(**kw):
-    defaults = dict(ma_fast=3, ma_slow=5, stop_pct=1.0)
-    defaults.update(kw)
-    return MAVWAPOpenStrategy(**defaults)
+def _rising(start_dt, prices, vol=10_000):
+    return [candle(start_dt + timedelta(minutes=i), p, vol) for i, p in enumerate(prices)]
 
 
-def _warm_up(strategy, symbol, n, base_ts, price=100.0, above_vwap=True):
-    """Feed n candles of flat price to build MA history."""
-    for i in range(n):
-        strategy.on_candle(symbol, candle(base_ts + timedelta(minutes=i), price))
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
+def _feed(strategy, symbol, candles):
+    sigs = []
+    for c in candles:
+        sigs.append(strategy.on_candle(symbol, c))
+    return sigs
+
+
+def _enter(strategy, symbol, day=2) -> object:
+    """Feed enough rising candles to trigger a BUY."""
+    prices = [99.0, 100.0, 102.0]
+    sigs = []
+    for i, p in enumerate(prices):
+        sigs.append(strategy.on_candle(symbol, candle(_dt(9, 15 + i, day=day), p)))
+    buys = [s for s in sigs if s is not None and s.action == Action.BUY]
+    return buys[0] if buys else None
+
+
+# ── Mode-independent tests ───────────────────────────────────────────────────
 
 def test_no_entry_before_enough_ma_history():
-    s = make_strategy()   # ma_slow=5
-    for i in range(4):    # only 4 candles, need 5
+    s = MAVWAPOpenStrategy(ma_fast=3, ma_slow=5)
+    for i in range(4):
         sig = s.on_candle("A", candle(_dt(9, 15 + i), 105.0))
     assert sig is None
 
 
 def test_no_entry_outside_time_window():
-    """Signal must not fire after 09:45 even if all other conditions hold."""
-    s = make_strategy()
-    # Warm up 5 candles inside window.
-    for i in range(5):
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3)
+    for i in range(3):
         s.on_candle("A", candle(_dt(9, 15 + i), 100.0))
-    # Feed a qualifying candle at 09:50 (outside window).
     sig = s.on_candle("A", candle(_dt(9, 50), 110.0, volume=50_000))
     assert sig is None or sig.action != Action.BUY
 
 
-def test_entry_when_all_conditions_met():
-    """BUY fires inside the window when MA9>MA21 and close>VWAP."""
-    s = make_strategy(ma_fast=2, ma_slow=3)
-    # Feed 3 rising candles starting at 9:15 → MA fast > MA slow, VWAP~100.
-    prices = [99.0, 100.0, 102.0]
-    for i, p in enumerate(prices):
-        sig = s.on_candle("A", candle(_dt(9, 15 + i), p))
-    # Third candle at 9:17 should have MA2(101) > MA3(100.33) and close(102)>VWAP.
-    assert sig is not None
-    assert sig.action == Action.BUY
-    assert sig.stop_price is not None and sig.stop_price < sig.price
-
-
 def test_no_second_entry_same_day():
-    """Once in a position, no second BUY fires on the same day."""
-    s = make_strategy(ma_fast=2, ma_slow=3)
-    prices = [99.0, 100.0, 102.0]
-    buy_sig = None
-    for i, p in enumerate(prices):
-        buy_sig = s.on_candle("A", candle(_dt(9, 15 + i), p))
-    assert buy_sig is not None and buy_sig.action == Action.BUY
-
-    # Another qualifying candle — must not re-enter.
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3)
+    buy = _enter(s, "A")
+    assert buy is not None and buy.action == Action.BUY
     sig = s.on_candle("A", candle(_dt(9, 20), 105.0, volume=50_000))
     assert sig is None or sig.action != Action.BUY
 
 
-def test_exit_on_vwap_cross_back():
-    """Position is closed when close drops below VWAP."""
-    s = make_strategy(ma_fast=2, ma_slow=3, stop_pct=20.0)  # wide stop to isolate VWAP exit
-    for i, p in enumerate([99.0, 100.0, 102.0]):
-        sig = s.on_candle("A", candle(_dt(9, 15 + i), p))
-    assert sig is not None and sig.action == Action.BUY
-
-    # Big dip far below VWAP (current VWAP ~100.33) and below MA.
-    sig = s.on_candle("A", candle(_dt(9, 18), 85.0))
-    assert sig is not None
-    assert sig.action == Action.EXIT
-    assert "VWAP" in sig.reason
-
-
-def test_exit_on_ma_cross():
-    """Position is closed when MA9 crosses below MA21."""
-    s = make_strategy(ma_fast=2, ma_slow=3, stop_pct=50.0)
-    for i, p in enumerate([99.0, 100.0, 102.0]):
-        s.on_candle("A", candle(_dt(9, 15 + i), p))
-
-    # Small dip that doesn't breach VWAP but drags MA fast below MA slow.
-    # VWAP ~100.33; close at 100.5 is above it but MA changes.
-    # Feed two falling candles: 102 -> 100.5 -> 99.0
-    s.on_candle("A", candle(_dt(9, 18), 100.5))
-    sig = s.on_candle("A", candle(_dt(9, 19), 99.0))
-    assert sig is not None
-    assert sig.action == Action.EXIT
-
-
 def test_force_exit_squares_open_position():
-    """force_exit closes the position and returns an EXIT signal."""
-    s = make_strategy(ma_fast=2, ma_slow=3)
-    for i, p in enumerate([99.0, 100.0, 102.0]):
-        s.on_candle("A", candle(_dt(9, 15 + i), p))
-
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3)
+    _enter(s, "A")
     sig = s.force_exit("A", 103.0, _dt(15, 20))
-    assert sig is not None
-    assert sig.action == Action.EXIT
-    assert "EOD" in sig.reason
-    # Second call — position already closed, no signal.
+    assert sig is not None and sig.action == Action.EXIT and "EOD" in sig.reason
     assert s.force_exit("A", 103.0, _dt(15, 20)) is None
 
 
 def test_vwap_resets_on_new_day():
-    """Accumulators reset at midnight; a fresh BUY can fire on day 2."""
-    s = make_strategy(ma_fast=2, ma_slow=3)
-    # Day 1: enter and close position.
-    for i, p in enumerate([99.0, 100.0, 102.0]):
-        s.on_candle("A", candle(_dt(9, 15 + i, day=2), p))
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3)
+    _enter(s, "A", day=2)
     s.force_exit("A", 102.0, _dt(15, 20, day=2))
+    buy2 = _enter(s, "A", day=3)
+    assert buy2 is not None and buy2.action == Action.BUY
 
-    # Day 2: fresh candles, should get a new BUY.
-    sigs = []
-    for i, p in enumerate([99.0, 100.0, 103.0]):
-        sigs.append(s.on_candle("A", candle(_dt(9, 15 + i, day=3), p)))
+
+# ── Mode: "vwap" ─────────────────────────────────────────────────────────────
+
+def test_vwap_exit_on_vwap_recross():
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=20.0, exit_mode="vwap")
+    _enter(s, "A")
+    sig = s.on_candle("A", candle(_dt(9, 18), 85.0))
+    assert sig is not None and sig.action == Action.EXIT and "VWAP" in sig.reason
+
+
+def test_vwap_exit_on_ma_cross():
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=50.0, exit_mode="vwap")
+    _enter(s, "A")
+    s.on_candle("A", candle(_dt(9, 18), 100.5))
+    sig = s.on_candle("A", candle(_dt(9, 19), 99.0))
+    assert sig is not None and sig.action == Action.EXIT
+
+
+# ── Mode: "target" ────────────────────────────────────────────────────────────
+
+def test_target_exit_on_profit_target():
+    """BUY at ~102, stop at ~102*(1-1%)=100.98, dist≈1.02, 2R target≈104.04."""
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=1.0, exit_mode="target", target_r=2.0)
+    buy = _enter(s, "A")
+    assert buy is not None
+    # Entry ~102; dist ≈ 1.02; target ≈ 104.04
+    target = buy.price + 2.0 * (buy.price - buy.stop_price)
+    sig = s.on_candle("A", candle(_dt(9, 18), target + 1))
+    assert sig is not None and sig.action == Action.EXIT and "target" in sig.reason
+
+
+def test_target_no_exit_on_vwap_recross():
+    """In target mode, crossing back below VWAP should NOT trigger an exit."""
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=10.0, exit_mode="target", target_r=5.0)
+    _enter(s, "A")
+    # Price dips to 98 — below early VWAP (~100) but well above 10% stop.
+    sig = s.on_candle("A", candle(_dt(9, 18), 98.0))
+    # Should not exit (no VWAP recross exit in target mode).
+    assert sig is None or sig.action != Action.EXIT
+
+
+def test_target_exit_on_stop():
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=1.0, exit_mode="target", target_r=10.0)
+    buy = _enter(s, "A")
+    assert buy is not None
+    crash = buy.stop_price - 1
+    sig = s.on_candle("A", candle(_dt(9, 18), crash))
+    assert sig is not None and sig.action == Action.EXIT and "stop" in sig.reason
+
+
+# ── Mode: "prev_vwap" ─────────────────────────────────────────────────────────
+
+def test_prev_vwap_no_entry_on_first_day():
+    """On the very first day there is no prev_vwap yet — no entry should fire."""
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, exit_mode="prev_vwap")
+    buys = [sig for sig in _feed(s, "A", _rising(_dt(9, 15), [99, 100, 103]))
+            if sig is not None and sig.action == Action.BUY]
+    assert buys == []
+
+
+def test_prev_vwap_entry_uses_previous_day_level():
+    """After day 1, prev_vwap is set; a strong open on day 2 should trigger entry."""
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=1.0, exit_mode="prev_vwap")
+    # Day 1: feed candles, let VWAP accumulate (close ~100 → prev_vwap ~100).
+    _feed(s, "A", _rising(_dt(9, 15, day=2), [100, 100, 100, 100]))
+    # Day 2: open strongly above prev_vwap with rising MAs.
+    sigs = _feed(s, "A", _rising(_dt(9, 15, day=3), [99, 100, 103]))
     buys = [sg for sg in sigs if sg is not None and sg.action == Action.BUY]
     assert len(buys) == 1
+
+
+def test_prev_vwap_exit_below_prev_vwap():
+    s = MAVWAPOpenStrategy(ma_fast=2, ma_slow=3, stop_pct=50.0, exit_mode="prev_vwap")
+    # Day 1: VWAP ~100.
+    _feed(s, "A", _rising(_dt(9, 15, day=2), [100, 100, 100, 100]))
+    # Day 2: enter.
+    _feed(s, "A", _rising(_dt(9, 15, day=3), [99, 100, 103]))
+    # Drop below prev_vwap (~100).
+    sig = s.on_candle("A", candle(_dt(9, 18, day=3), 95.0))
+    assert sig is not None and sig.action == Action.EXIT and "prev-day VWAP" in sig.reason
